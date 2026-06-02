@@ -1,38 +1,6 @@
-const requestDetails = new WeakMap<any, { reqId: number; url: string; controller?: AbortController; userSignal?: AbortSignal }>();
+const signalControllers = new WeakMap<AbortSignal, AbortController>();
+const responseControllers = new WeakMap<Response, AbortController>();
 let requestCounter = 0;
-
-function wrapResponseBody(res: Response, reqId: number, url: string, signal: AbortSignal | undefined) {
-  const originalBody = res.body;
-  if (!originalBody) return;
-
-  const details = requestDetails.get(res);
-
-  try {
-    const originalGetReader = originalBody.getReader;
-    Object.defineProperty(originalBody, "getReader", {
-      value: function(this: any, ...args: any[]) {
-        const reader = originalGetReader.apply(this, args);
-        if (details) {
-          requestDetails.set(reader, details);
-        }
-
-        const originalCancel = reader.cancel;
-        reader.cancel = async function(this: any, ...cancelArgs: any[]) {
-          try {
-            return await originalCancel.apply(this, cancelArgs);
-          } catch (cancelErr: any) {
-            throw cancelErr;
-          }
-        };
-        return reader;
-      },
-      writable: true,
-      configurable: true
-    });
-  } catch (err: any) {
-    console.warn(`[fetch] [reqId=${reqId}] Failed to override res.body.getReader:`, err?.message ?? err);
-  }
-}
 
 // Workaround for Bun v1.3.x on Windows: passing the user AbortSignal directly
 // to a streaming fetch and letting Bun cancel the resulting ReadableStream
@@ -47,31 +15,48 @@ export async function fetchWithPreflightAbort(
 ): Promise<Response> {
   const reqId = ++requestCounter;
   const url = typeof input === "string" ? input : (input instanceof URL ? input.toString() : input.url);
+  const method = init?.method ?? "GET";
+
+  console.info(`[fetch] [reqId=${reqId}] Starting ${method} request to ${url} (hasSignal=${!!signal})`);
 
   if (!signal) {
-    const res = await fetch(input, init);
-    const details = { reqId, url };
-    requestDetails.set(res, details);
-    wrapResponseBody(res, reqId, url, signal);
-    return res;
+    try {
+      const res = await fetch(input, init);
+      console.info(`[fetch] [reqId=${reqId}] Response received: ${res.status} ${res.statusText}`);
+      return res;
+    } catch (err: any) {
+      console.error(`[fetch] [reqId=${reqId}] Request failed:`, err?.message ?? err);
+      throw err;
+    }
   }
 
   if (signal.aborted) {
+    console.warn(`[fetch] [reqId=${reqId}] Preflight abort: signal is already aborted`);
     throw signal.reason ?? new DOMException("Aborted", "AbortError");
   }
 
   const controller = new AbortController();
+  
+  // Safe Anchoring using WeakMap (never mutates native host objects to prevent JIT/GC crashes in Bun):
+  signalControllers.set(signal, controller);
+
   const onAbort = () => {
+    console.warn(`[fetch] [reqId=${reqId}] Abort triggered during preflight for ${url}`);
     controller.abort(signal.reason ?? new DOMException("Aborted", "AbortError"));
   };
 
   signal.addEventListener("abort", onAbort, { once: true });
   try {
     const res = await fetch(input, { ...init, signal: controller.signal });
-    const details = { reqId, url, controller, userSignal: signal };
-    requestDetails.set(res, details);
-    wrapResponseBody(res, reqId, url, signal);
+    console.info(`[fetch] [reqId=${reqId}] Response received: ${res.status} ${res.statusText}`);
+    
+    // Anchor to the Response object as well
+    responseControllers.set(res, controller);
+    
     return res;
+  } catch (err: any) {
+    console.error(`[fetch] [reqId=${reqId}] Request failed/aborted during fetch:`, err?.message ?? err);
+    throw err;
   } finally {
     signal.removeEventListener("abort", onAbort);
   }
@@ -133,17 +118,11 @@ export async function readJsonWithAbort<T>(
   signal: AbortSignal | undefined,
   maxBytes: number = DEFAULT_MAX_JSON_BYTES,
 ): Promise<T> {
-  const details = requestDetails.get(res);
-
   if (!res.body) {
     return (await res.json()) as T;
   }
 
   const reader = res.body.getReader();
-  if (details) {
-    requestDetails.set(reader, details);
-  }
-
   const decoder = new TextDecoder();
   let buffer = "";
   let total = 0;

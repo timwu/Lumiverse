@@ -78,6 +78,8 @@ function deleteEmbeddingSecret(userId: string, provider: EmbeddingProvider): voi
   secretsSvc.deleteSecret(userId, EMBEDDING_SECRET_KEY);
 }
 
+const timeoutControllers = new WeakMap<AbortSignal, AbortController>();
+
 /** Combine an optional external abort signal with an internal timeout into a
  *  single signal. Used so callers (like an active generation) can cancel an
  *  in-flight embedding request without waiting for its own timeout. */
@@ -92,6 +94,9 @@ function linkTimeoutSignal(
   const combined = external
     ? AbortSignal.any([external, timeoutController.signal])
     : timeoutController.signal;
+
+  timeoutControllers.set(combined, timeoutController);
+
   return {
     signal: combined,
     cleanup: () => { if (timer) clearTimeout(timer); },
