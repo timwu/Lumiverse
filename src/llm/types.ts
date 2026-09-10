@@ -189,6 +189,8 @@ export interface GenerationRequest {
   tools?: ToolDefinition[];
   /** Optional abort signal — when fired, cancels the in-flight HTTP request. */
   signal?: AbortSignal;
+  /** Optional chat/conversation ID to correlate session across turns. */
+  chatId?: string;
 }
 
 export interface ToolDefinition {

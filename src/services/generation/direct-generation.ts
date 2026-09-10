@@ -214,6 +214,7 @@ async function prepareQuietCall(
       parameters: cached.params,
       tools: cached.tools,
       signal: input.signal,
+      chatId: input.chat_id,
     },
   };
 }

@@ -3497,6 +3497,7 @@ async function runGeneration(
             stream: true,
             tools,
             signal,
+            chatId,
           })
         : (async function* () {
             const result = await provider.generate(apiKey, apiUrl, {
@@ -3506,6 +3507,7 @@ async function runGeneration(
               stream: false,
               tools,
               signal,
+              chatId,
             });
             yield {
               token: result.content,
@@ -4582,6 +4584,7 @@ export async function summarizeGenerate(
       messages: cached.messages,
       model: resolvedModel,
       parameters: cached.params,
+      chatId,
     };
 
     const result = applyDelimitedReasoningParsing(
@@ -4703,6 +4706,7 @@ async function processRebuildBatch(
     model: sidecarModel || ctx.connection.model,
     parameters: cached.params,
     stream: false,
+    chatId: ctx.chatId,
   };
 
   // Call LLM for this batch

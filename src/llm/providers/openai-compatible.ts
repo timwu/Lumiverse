@@ -124,7 +124,7 @@ export abstract class OpenAICompatibleProvider implements LlmProvider {
   }
 
   /** Override to add provider-specific headers (e.g. OpenRouter's HTTP-Referer). */
-  protected extraHeaders(_apiKey: string): Record<string, string> {
+  protected extraHeaders(_apiKey: string, _request?: GenerationRequest): Record<string, string> {
     return {};
   }
 
@@ -132,13 +132,13 @@ export abstract class OpenAICompatibleProvider implements LlmProvider {
     return apiKey.trim().replace(/^Bearer\s+/i, "");
   }
 
-  protected headers(apiKey: string): Record<string, string> {
+  protected headers(apiKey: string, request?: GenerationRequest): Record<string, string> {
     const normalizedApiKey = this.normalizeApiKey(apiKey);
 
     return {
       "Content-Type": "application/json",
       ...(normalizedApiKey ? { Authorization: `Bearer ${normalizedApiKey}` } : {}),
-      ...this.extraHeaders(normalizedApiKey),
+      ...this.extraHeaders(normalizedApiKey, request),
     };
   }
 
@@ -152,7 +152,7 @@ export abstract class OpenAICompatibleProvider implements LlmProvider {
 
     const res = await fetchWithPreflightAbort(url, {
       method: "POST",
-      headers: this.headers(apiKey),
+      headers: this.headers(apiKey, request),
       body: JSON.stringify(body),
     }, request.signal);
 
@@ -225,7 +225,7 @@ export abstract class OpenAICompatibleProvider implements LlmProvider {
 
     const res = await fetchWithPreflightAbort(url, {
       method: "POST",
-      headers: this.headers(apiKey),
+      headers: this.headers(apiKey, request),
       body: JSON.stringify(body),
     }, request.signal);
 
