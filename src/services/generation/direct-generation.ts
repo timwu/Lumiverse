@@ -37,6 +37,8 @@ export interface RawGenerateInput {
   tools?: ToolDefinition[];
   /** Per-request reasoning settings, or the inherited connection/global settings. */
   reasoning?: GenerationReasoningOverrideDTO;
+  /** Reserved caller context or session identifier for provider session headers. */
+  chat_id?: string;
 }
 
 export interface QuietGenerateInput {
@@ -163,6 +165,7 @@ async function prepareRawCall(
       parameters: cached.params,
       tools: cached.tools,
       signal: input.signal,
+      chatId: input.chat_id,
     },
   };
 }

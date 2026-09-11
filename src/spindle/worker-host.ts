@@ -3098,6 +3098,14 @@ export class WorkerHost {
     const abortController = new AbortController();
     this.generationAbortControllers.set(requestId, abortController);
 
+    const chatId =
+      input.chat_id ||
+      input.chatId ||
+      input.sessionId ||
+      input.session_id ||
+      input.parameters?.session_id ||
+      input.parameters?.sessionId;
+
     try {
       let result: unknown;
       switch (input.type) {
@@ -3111,6 +3119,7 @@ export class WorkerHost {
             tools: input.tools,
             reasoning: input.reasoning,
             signal: abortController.signal,
+            chat_id: chatId,
           });
           break;
         case "quiet":
@@ -3121,6 +3130,7 @@ export class WorkerHost {
             tools: input.tools,
             reasoning: input.reasoning,
             signal: abortController.signal,
+            chat_id: chatId,
           });
           break;
         case "batch":
@@ -3201,6 +3211,14 @@ export class WorkerHost {
     const abortController = new AbortController();
     this.generationAbortControllers.set(requestId, abortController);
 
+    const chatId =
+      input.chat_id ||
+      input.chatId ||
+      input.sessionId ||
+      input.session_id ||
+      input.parameters?.session_id ||
+      input.parameters?.sessionId;
+
     try {
       let stream: AsyncGenerator<import("../llm/types").StreamChunk, void, unknown>;
       switch (input.type) {
@@ -3214,6 +3232,7 @@ export class WorkerHost {
             tools: input.tools,
             reasoning: input.reasoning,
             signal: abortController.signal,
+            chat_id: chatId,
           });
           break;
         case "quiet":
@@ -3224,6 +3243,7 @@ export class WorkerHost {
             tools: input.tools,
             reasoning: input.reasoning,
             signal: abortController.signal,
+            chat_id: chatId,
           });
           break;
         default:
