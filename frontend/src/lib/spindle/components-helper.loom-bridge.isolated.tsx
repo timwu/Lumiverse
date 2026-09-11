@@ -6,6 +6,7 @@ import { registerLiveRoot } from './live-root-registry'
 import type {
   PromptBlockDTO,
   SpindleLoomBlockEditorHandle,
+  SpindleLoomBlockEditorOptions,
   SpindleLoomBlockEditorValue,
 } from 'lumiverse-spindle-types'
 
@@ -55,6 +56,9 @@ type ControlledProps = {
   blocks: PromptBlockDTO[]
   promptVariables: SpindleLoomBlockEditorValue['promptVariableValues']
   onChange(blocks: PromptBlockDTO[]): boolean
+  onDraftChange?(blockId: string, updates: Partial<PromptBlockDTO> | null): void
+  selectedBlockId?: string | null
+  onSelectedBlockChange?(blockId: string | null): void
   trustedHostFeatures?: boolean
 }
 let controlledProps: ControlledProps | null = null
@@ -133,9 +137,10 @@ function mount(
   extensionId: string,
   initial: SpindleLoomBlockEditorValue,
   onChange?: (next: SpindleLoomBlockEditorValue) => void,
+  options: Omit<SpindleLoomBlockEditorOptions, 'value' | 'onChange'> = {},
 ): SpindleLoomBlockEditorHandle {
   const handle = createComponentsHelper(extensionId, extensionId, async () => ({ categories: [] }))
-    .mountLoomBlockEditor(ownedRoot(extensionId, `${extensionId}-target`), { value: initial, onChange })
+    .mountLoomBlockEditor(ownedRoot(extensionId, `${extensionId}-target`), { value: initial, onChange, ...options })
   const destroy = handle.destroy
   handle.destroy = () => {
     destroy()
@@ -219,6 +224,43 @@ describe('Loom component bridge state transitions', () => {
 
     expect(controlledProps?.onChange([block('candidate')])).toBe(true)
     expect(handle.getValue().blocks[0]?.id).toBe('candidate')
+    handle.destroy()
+  })
+
+  test('forwards controlled selection and native selection callbacks', () => {
+    const selected: Array<string | null> = []
+    const handle = mount('loom-bridge-selection', value({ blocks: [block('one'), block('two')] }), undefined, {
+      selectedBlockId: 'two',
+      onSelectedBlockChange: (blockId) => { selected.push(blockId) },
+    })
+
+    expect(controlledProps?.selectedBlockId).toBe('two')
+    controlledProps?.onSelectedBlockChange?.(null)
+    expect(selected).toEqual([null])
+
+    flushSync(() => handle.update({ selectedBlockId: 'one' }))
+    expect(controlledProps?.selectedBlockId).toBe('one')
+    expect(handle.getValue().blocks.map((entry) => entry.id)).toEqual(['one', 'two'])
+    handle.destroy()
+  })
+
+  test('publishes detached validated drafts without committing bridge value', () => {
+    const drafts: Array<SpindleLoomBlockEditorValue | null> = []
+    const initial = value({ blocks: [block('one', { content: 'committed' })] })
+    const handle = mount('loom-bridge-draft', initial, undefined, {
+      onDraftChange: (next) => { drafts.push(next) },
+    })
+
+    controlledProps?.onDraftChange?.('one', { content: 'draft' })
+    expect(drafts).toHaveLength(1)
+    expect(drafts[0]?.blocks[0]?.content).toBe('draft')
+    expect(handle.getValue().blocks[0]?.content).toBe('committed')
+
+    drafts[0]!.blocks[0]!.content = 'consumer mutation'
+    expect(handle.getValue().blocks[0]?.content).toBe('committed')
+
+    controlledProps?.onDraftChange?.('one', null)
+    expect(drafts[1]).toBeNull()
     handle.destroy()
   })
 

@@ -332,6 +332,11 @@ function renderControlled(
   blocks: PromptBlock[],
   onChange: (next: PromptBlock[]) => void,
   trustedHostFeatures?: boolean,
+  options: {
+    onDraftChange?: (blockId: string, updates: Partial<PromptBlock> | null) => void
+    selectedBlockId?: string | null
+    onSelectedBlockChange?: (blockId: string | null) => void
+  } = {},
 ): { container: HTMLDivElement; root: Root } {
   const container = document.createElement('div')
   document.body.append(container)
@@ -343,6 +348,7 @@ function renderControlled(
       onChange,
       availableMacros: [],
       compact: true,
+      ...options,
       ...(trustedHostFeatures === undefined ? {} : { trustedHostFeatures }),
     }))
   })
@@ -451,6 +457,94 @@ describe('controlled Loom editor trust boundary', () => {
 
     expect(container.textContent).not.toContain('blockEditor.preview')
     expect(container.textContent).not.toContain('blockEditor.sealedBlockTitle')
+    unmountRoot(root)
+  })
+
+  test('opens an externally selected block and reports native back navigation', () => {
+    const selected: Array<string | null> = []
+    const blocks = [block({ id: 'first', name: 'First' }), block({ id: 'second', name: 'Second' })]
+    const { container, root } = renderControlled(blocks, () => {}, undefined, {
+      selectedBlockId: 'second',
+      onSelectedBlockChange: (blockId) => { selected.push(blockId) },
+    })
+
+    const nameInput = [...container.querySelectorAll<HTMLInputElement>('input')]
+      .find((input) => input.value === 'Second')
+    expect(nameInput).toBeDefined()
+
+    flushSync(() => container.querySelector<HTMLButtonElement>('button[title="blockEditor.backToList"]')!.click())
+    expect(selected).toEqual([null])
+    unmountRoot(root)
+  })
+
+  test('reports in-progress block drafts before save and clears them on back', async () => {
+    const drafts: Array<{ blockId: string; updates: Partial<PromptBlock> | null }> = []
+    let commits = 0
+    const { container, root } = renderControlled([block()], () => { commits += 1 }, undefined, {
+      onDraftChange: (blockId, updates) => { drafts.push({ blockId, updates }) },
+    })
+
+    flushSync(() => container.querySelector<HTMLButtonElement>('button[title="actions.edit"]')!.click())
+    editRole(container, 'assistant')
+    await act(async () => {})
+
+    expect(commits).toBe(0)
+    expect(drafts.at(-1)).toMatchObject({ blockId: 'public-block', updates: { role: 'assistant' } })
+
+    flushSync(() => container.querySelector<HTMLButtonElement>('button[title="blockEditor.backToList"]')!.click())
+    expect(drafts.at(-1)).toEqual({ blockId: 'public-block', updates: null })
+    expect(commits).toBe(0)
+    unmountRoot(root)
+  })
+
+  test('clears a controlled draft when the selected block is removed', async () => {
+    const drafts: Array<{ blockId: string; updates: Partial<PromptBlock> | null }> = []
+    const selected: Array<string | null> = []
+    const onDraftChange = (blockId: string, updates: Partial<PromptBlock> | null) => {
+      drafts.push({ blockId, updates })
+    }
+    const onSelectedBlockChange = (blockId: string | null) => { selected.push(blockId) }
+    const { container, root } = renderControlled([block()], () => {}, undefined, {
+      selectedBlockId: 'public-block',
+      onDraftChange,
+      onSelectedBlockChange,
+    })
+
+    editRole(container, 'assistant')
+    await act(async () => {})
+    expect(drafts.at(-1)).toMatchObject({ blockId: 'public-block', updates: { role: 'assistant' } })
+
+    flushSync(() => {
+      root.render(createElement(ControlledLoomBlockEditor, {
+        blocks: [],
+        promptVariables,
+        onChange: () => {},
+        onDraftChange,
+        selectedBlockId: 'public-block',
+        onSelectedBlockChange,
+        availableMacros: [],
+        compact: true,
+      }))
+    })
+    await act(async () => {})
+
+    expect(selected).toEqual([null])
+    expect(drafts.at(-1)).toEqual({ blockId: 'public-block', updates: null })
+
+    flushSync(() => {
+      root.render(createElement(ControlledLoomBlockEditor, {
+        blocks: [],
+        promptVariables,
+        onChange: () => {},
+        onDraftChange,
+        selectedBlockId: null,
+        onSelectedBlockChange,
+        availableMacros: [],
+        compact: true,
+      }))
+    })
+    await act(async () => {})
+    expect(drafts.filter(({ updates }) => updates === null)).toHaveLength(1)
     unmountRoot(root)
   })
 

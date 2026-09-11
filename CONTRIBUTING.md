@@ -15,6 +15,7 @@ Before opening a pull request:
 - Keep security-sensitive backend work separate from UI/UX changes. Changes that affect or encroach on the Spindle system or other security systems require separate pull requests and auditing; do not bundle them into UI/UX pull requests.
 - For performance-oriented pull requests, include tests and reproducible benchmarks. Describe how reviewers can run the benchmark and compare the result.
 - For LLM-assisted code, the human orchestrating the work must audit the submitted changes in a live environment before opening the pull request.
+- **All** new code and modified existing code must ensure the unit tests have been changed in order to verify the new structures and pipelines added. You must include a minimally viable data structure with new tests that can assist in discovering regression or breakpoints for maintainer sanity, future modifications and other contributors to work from.
 
 ## Pull request description
 

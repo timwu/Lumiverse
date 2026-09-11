@@ -3,6 +3,30 @@ export const GALLERY_IMAGE_REFERENCE_PREFIX = "gallery://";
 const GALLERY_REFERENCE_TOKEN_RE = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
 const CANONICAL_GALLERY_REFERENCE_TOKEN_RE = /^image-([1-9][0-9]*)$/;
 
+/**
+ * Turn a user-facing gallery image name into a portable reference token.
+ * Keeping this normalization on the server makes every client and import path
+ * agree on the final `gallery://...` value.
+ */
+export function normalizeGalleryImageReferenceName(name: string): string {
+  const withoutPrefix = name.trim().replace(/^gallery:\/\//i, "");
+  const token = withoutPrefix
+    .normalize("NFKD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[\u2018\u2019']/g, "")
+    .toLowerCase()
+    .replace(/[^a-z0-9._-]+/g, "-")
+    .replace(/-+/g, "-")
+    .replace(/^[._-]+|[._-]+$/g, "")
+    .slice(0, 128)
+    .replace(/[._-]+$/g, "");
+
+  if (!GALLERY_REFERENCE_TOKEN_RE.test(token)) {
+    throw new Error("Reference name must contain at least one letter or number");
+  }
+  return token;
+}
+
 export function createGalleryImageReference(token: string): string {
   if (!GALLERY_REFERENCE_TOKEN_RE.test(token)) {
     throw new Error("Invalid gallery image reference token");

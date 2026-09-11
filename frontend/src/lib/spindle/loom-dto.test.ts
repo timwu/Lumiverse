@@ -378,36 +378,54 @@ describe('cloneLoomValue', () => {
 })
 
 describe('Loom option cloning and patches', () => {
-  test('clones options and defaults readOnly to false and compact to true', () => {
+  test('clones callbacks and controlled selection while defaulting layout flags', () => {
     const source = value()
     const onChange = () => {}
-    const options = cloneLoomOptions({ value: source, onChange })
+    const onDraftChange = () => {}
+    const onSelectedBlockChange = () => {}
+    const options = cloneLoomOptions({
+      value: source,
+      onChange,
+      onDraftChange,
+      selectedBlockId: 'one',
+      onSelectedBlockChange,
+    })
 
     expect(options.readOnly).toBe(false)
     expect(options.compact).toBe(true)
     expect(options.onChange).toBe(onChange)
+    expect(options.onDraftChange).toBe(onDraftChange)
+    expect(options.selectedBlockId).toBe('one')
+    expect(options.onSelectedBlockChange).toBe(onSelectedBlockChange)
     expect(options.value).not.toBe(source)
     expect(Object.getPrototypeOf(options.value)).toBeNull()
   })
 
   test('applies partial patches and preserves unchanged fields', () => {
     const onChange = () => {}
+    const onDraftChange = () => {}
     const replacement = value({ blocks: [block('replacement')] })
-    const current = cloneLoomOptions({ value: value(), onChange, compact: true })
-    const next = patchLoomOptions(current, { value: replacement, readOnly: true })
+    const current = cloneLoomOptions({ value: value(), onChange, onDraftChange, selectedBlockId: 'one', compact: true })
+    const next = patchLoomOptions(current, { value: replacement, selectedBlockId: null, readOnly: true })
 
     expect(next.readOnly).toBe(true)
     expect(next.compact).toBe(true)
     expect(next.onChange).toBe(onChange)
+    expect(next.onDraftChange).toBe(onDraftChange)
+    expect(next.selectedBlockId).toBeNull()
     expect(next.value).not.toBe(replacement)
     expect(next.value.blocks[0]!.id).toBe('replacement')
     expect(current.readOnly).toBe(false)
+    expect(current.selectedBlockId).toBe('one')
     expect(current.value.blocks[0]!.id).toBe('one')
   })
 
   test('rejects invalid patches without changing the current options', () => {
     const current = cloneLoomOptions({ value: value() })
     expect(() => patchLoomOptions(current, { readOnly: 'yes' })).toThrow('readOnly')
+    expect(() => patchLoomOptions(current, { selectedBlockId: '' })).toThrow('selectedBlockId')
+    expect(() => patchLoomOptions(current, { onDraftChange: 'nope' })).toThrow('onDraftChange')
+    expect(() => patchLoomOptions(current, { onSelectedBlockChange: 42 })).toThrow('onSelectedBlockChange')
     expect(() => patchLoomOptions(current, { value: { blocks: [], extra: true, promptVariableValues: {} } })).toThrow('unknown field')
     expect(current.readOnly).toBe(false)
     expect(current.value.blocks[0]!.id).toBe('one')

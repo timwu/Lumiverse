@@ -553,6 +553,7 @@ interface BlockEditorProps {
   promptVariables: PromptVariableValues
   onSave: (updates: Partial<PromptBlock>) => boolean | void
   onBack: () => void
+  onDraftChange?: (updates: Partial<PromptBlock>) => void
   validationError?: string | null
   availableMacros: MacroGroup[]
   refreshMacros?: () => void
@@ -598,6 +599,7 @@ export function BlockEditor({
   promptVariables,
   onSave,
   onBack,
+  onDraftChange,
   validationError,
   availableMacros,
   refreshMacros,
@@ -639,7 +641,7 @@ export function BlockEditor({
     else if (pos === 'pre_history' && role === 'assistant') setRole('system')
   }
 
-  const handleSave = () => {
+  const buildDraftUpdates = useCallback((): Partial<PromptBlock> => {
     const isAppend = role === 'user_append' || role === 'assistant_append'
     const cleanedVariables = variables.filter((variable) => variable && variable.name?.trim().length > 0)
     const cleanedCharacterTagTrigger = sanitizeCharacterTagTrigger(characterTagTrigger)
@@ -659,7 +661,7 @@ export function BlockEditor({
       trustedUpdates.sealedOriginVersion = isInstalledLumiHubSealed ? block.sealedOriginVersion : undefined
       trustedUpdates.sealedSha256 = isInstalledLumiHubSealed ? block.sealedSha256 : undefined
     }
-    onSave({
+    return {
       name,
       role,
       content,
@@ -672,7 +674,48 @@ export function BlockEditor({
       categoryMode: block.marker === 'category' ? categoryMode : null,
       variables: cleanedVariables.length ? cleanedVariables : undefined,
       placementBinding: cleanPlacementBinding(placementBinding, cleanedVariables, fallbackPlacement),
-    })
+    }
+  }, [
+    block.id,
+    block.marker,
+    block.sealedKey,
+    block.sealedOriginPresetId,
+    block.sealedOriginVersion,
+    block.sealedSha256,
+    block.sealedSource,
+    categoryMode,
+    characterTagTrigger,
+    content,
+    depth,
+    injectionTrigger,
+    isInstalledLumiHubSealed,
+    isLocked,
+    name,
+    placementBinding,
+    position,
+    role,
+    sealed,
+    sealedKey,
+    trustedHostFeatures,
+    variables,
+  ])
+  const onDraftChangeRef = useRef(onDraftChange)
+  const draftEffectPrimedRef = useRef(false)
+
+  useEffect(() => {
+    onDraftChangeRef.current = onDraftChange
+  }, [onDraftChange])
+
+  useEffect(() => {
+    if (!draftEffectPrimedRef.current) {
+      draftEffectPrimedRef.current = true
+      return
+    }
+    onDraftChangeRef.current?.(buildDraftUpdates())
+  }, [buildDraftUpdates])
+
+  const handleSave = () => {
+    onSave(buildDraftUpdates())
   }
 
   const toggleTrigger = (value: string) => {
@@ -1015,6 +1058,9 @@ export interface ControlledLoomBlockEditorProps {
   blocks: PromptBlock[]
   promptVariables: PromptVariableValues
   onChange: (blocks: PromptBlock[]) => boolean | void | Promise<unknown>
+  onDraftChange?: (blockId: string, updates: Partial<PromptBlock> | null) => void
+  selectedBlockId?: string | null
+  onSelectedBlockChange?: (blockId: string | null) => void
   availableMacros: MacroGroup[]
   refreshMacros?: () => void
   readOnly?: boolean
@@ -1031,6 +1077,9 @@ export function ControlledLoomBlockEditor({
   blocks,
   promptVariables,
   onChange,
+  onDraftChange,
+  selectedBlockId,
+  onSelectedBlockChange,
   availableMacros,
   refreshMacros,
   readOnly = false,
@@ -1039,21 +1088,47 @@ export function ControlledLoomBlockEditor({
 }: ControlledLoomBlockEditorProps) {
   const { t } = useLb()
   const { t: tc } = useTranslation('common')
-  const [editingBlockId, setEditingBlockId] = useState<string | null>(null)
+  const [internalEditingBlockId, setInternalEditingBlockId] = useState<string | null>(null)
   const [validationError, setValidationError] = useState<string | null>(null)
+  const selectionControlled = selectedBlockId !== undefined
+  const editingBlockId = selectionControlled ? selectedBlockId ?? null : internalEditingBlockId
   const editingBlock = editingBlockId
     ? blocks.find((block) => block.id === editingBlockId) ?? null
     : null
+  const selectBlock = useCallback((blockId: string | null) => {
+    if (!selectionControlled) setInternalEditingBlockId(blockId)
+    onSelectedBlockChange?.(blockId)
+  }, [onSelectedBlockChange, selectionControlled])
+  const previousEditingBlockIdRef = useRef(editingBlockId)
+  const explicitlyClearedDraftBlockIdRef = useRef<string | null>(null)
   const effectiveRoles = useMemo(() => new Map(
     resolvePromptBlockPlacements(blocks, promptVariables)
       .map((block) => [block.id, block.role] as const),
   ), [blocks, promptVariables])
 
   useEffect(() => {
-    if (editingBlockId && !blocks.some((block) => block.id === editingBlockId)) {
-      setEditingBlockId(null)
+    const previousEditingBlockId = previousEditingBlockIdRef.current
+    if (previousEditingBlockId !== editingBlockId) {
+      if (previousEditingBlockId !== null) {
+        if (explicitlyClearedDraftBlockIdRef.current === previousEditingBlockId) {
+          explicitlyClearedDraftBlockIdRef.current = null
+        } else {
+          onDraftChange?.(previousEditingBlockId, null)
+        }
+      }
+      previousEditingBlockIdRef.current = editingBlockId
     }
-  }, [blocks, editingBlockId])
+  }, [editingBlockId, onDraftChange])
+
+  useEffect(() => {
+    if (!editingBlockId || blocks.some((block) => block.id === editingBlockId)) return
+    setValidationError(null)
+    if (explicitlyClearedDraftBlockIdRef.current !== editingBlockId) {
+      explicitlyClearedDraftBlockIdRef.current = editingBlockId
+      onDraftChange?.(editingBlockId, null)
+    }
+    selectBlock(null)
+  }, [blocks, editingBlockId, onDraftChange, selectBlock])
 
   if (editingBlock && !readOnly) {
     return (
@@ -1080,11 +1155,17 @@ export function ControlledLoomBlockEditor({
             return
           }
           setValidationError(null)
-          setEditingBlockId(null)
+          explicitlyClearedDraftBlockIdRef.current = editingBlock.id
+          onDraftChange?.(editingBlock.id, null)
+          selectBlock(null)
         }}
         onBack={() => {
           setValidationError(null)
-          setEditingBlockId(null)
+          selectBlock(null)
+        }}
+        onDraftChange={(updates) => {
+          explicitlyClearedDraftBlockIdRef.current = null
+          onDraftChange?.(editingBlock.id, updates)
         }}
         availableMacros={availableMacros}
         refreshMacros={refreshMacros}
@@ -1126,7 +1207,7 @@ export function ControlledLoomBlockEditor({
                   variant="ghost"
                   onClick={() => {
                     setValidationError(null)
-                    setEditingBlockId(block.id)
+                    selectBlock(block.id)
                   }}
                   title={tc('actions.edit')}
                 >

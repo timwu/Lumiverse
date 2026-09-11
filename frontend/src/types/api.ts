@@ -588,6 +588,7 @@ export interface TtsConnectionVoicesPreviewInput {
   provider: string;
   api_url?: string;
   api_key?: string;
+  model?: string;
   metadata?: Record<string, any>;
 }
 

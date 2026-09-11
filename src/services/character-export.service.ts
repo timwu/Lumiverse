@@ -210,6 +210,7 @@ const INTERNAL_EXTENSION_KEYS = new Set([
   "_lumiverse_source_filename",
   "risu_asset_map",
   "gallery_reference_sequence",
+  "gallery_reference_names",
 ]);
 
 export function buildCCSv3Json(userId: string, character: Character): Record<string, any> {

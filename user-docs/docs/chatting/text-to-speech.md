@@ -89,6 +89,16 @@ The built-in providers are listed below. Enabled [Spindle extensions](../extensi
 !!! tip "Kokoro is OpenAI-compatible"
     Kokoro inherits Lumiverse's OpenAI-compatible TTS plumbing, so any other OpenAI-compatible TTS server you have running can be reached by creating a Kokoro connection and pointing the API URL at it.
 
+### OpenVox TTS (self-hosted)
+
+- **API key:** Not required — OpenVox runs locally.
+- **Default URL:** `http://127.0.0.1:8000/v1`.
+- **Models:** Fetched from OpenVox with `GET /models`.
+- **Voices:** Fetched after a model is selected from `GET /models/{model}/voices`.
+- **Language:** Defaults to English (`en`) for synthesis.
+- **Output format:** WAV.
+- **Streaming:** Lumiverse currently uses OpenVox's buffered speech response.
+
 ---
 
 ## Playing Audio

@@ -6,6 +6,7 @@ import {
   findGalleryImageReference,
   galleryArchiveStem,
   galleryReferenceFromArchivePath,
+  normalizeGalleryImageReferenceName,
   parseGalleryImageReference,
   parseCanonicalGalleryImageReference,
   remapGreetingBackgrounds,
@@ -45,6 +46,14 @@ describe("portable gallery image references", () => {
   test("rejects paths that cannot be safe archive names", () => {
     expect(parseGalleryImageReference("gallery://../escape")).toBeNull();
     expect(galleryReferenceFromArchivePath("assets/other/image/not_gallery.png")).toBeNull();
+  });
+
+  test("normalizes friendly custom names into portable tokens", () => {
+    expect(normalizeGalleryImageReferenceName("  Gallery://Hero's R\u00e9sum\u00e9  ")).toBe("heros-resume");
+    expect(normalizeGalleryImageReferenceName("Beach___Scene.png")).toBe("beach___scene.png");
+    expect(() => normalizeGalleryImageReferenceName("--- \ud83c\udf0a ---")).toThrow(
+      "Reference name must contain at least one letter or number",
+    );
   });
 
   test("round-trips greeting backgrounds through portable gallery references", () => {

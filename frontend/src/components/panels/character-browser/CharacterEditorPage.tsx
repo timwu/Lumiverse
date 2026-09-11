@@ -21,6 +21,7 @@ import {
   Hash,
   MoreHorizontal,
   CircleHelp,
+  Pencil,
 } from 'lucide-react'
 import {
   DndContext,
@@ -167,6 +168,9 @@ function GalleryGridItem({ item, onRemove, onOpenMenu, onPreview }: GalleryGridI
         className={styles.galleryThumb}
         fallback={<div className={styles.galleryThumbPlaceholder} />}
       />
+      <span className={styles.galleryReferenceBadge} title={item.reference}>
+        {item.reference.replace(/^gallery:\/\//, '')}
+      </span>
       <button
         type="button"
         className={styles.galleryRemoveBtn}
@@ -510,6 +514,8 @@ export default function CharacterEditorPage() {
   const [creatingPersona, setCreatingPersona] = useState(false)
   const [replacingCard, setReplacingCard] = useState(false)
   const [galleryContextMenu, setGalleryContextMenu] = useState<{ pos: ContextMenuPos; item: CharacterGalleryItem } | null>(null)
+  const [galleryRenameItem, setGalleryRenameItem] = useState<CharacterGalleryItem | null>(null)
+  const [galleryRenaming, setGalleryRenaming] = useState(false)
   const [avatarUploadProgress, setAvatarUploadProgress] = useState<number | null>(null)
   const [altAvatarUploadProgress, setAltAvatarUploadProgress] = useState<number | null>(null)
   const [perspectiveLayerProgress, setPerspectiveLayerProgress] = useState<number | null>(null)
@@ -556,6 +562,9 @@ export default function CharacterEditorPage() {
   // reference changes can never accidentally reset the active tab.
   useEffect(() => {
     lastSyncedId.current = null
+    setGalleryContextMenu(null)
+    setGalleryRenameItem(null)
+    setGalleryLightboxSrc(null)
     if (editingCharacterId) {
       setActiveTab('core')
     }
@@ -803,7 +812,35 @@ export default function CharacterEditorPage() {
       .catch(() => toast.error(t('characterEditor.imageReferenceCopyFailed')))
   }, [t])
 
+  const handleGalleryReferenceRename = useCallback(async (name: string) => {
+    if (!editingCharacterId || !galleryRenameItem) return
+    setGalleryRenaming(true)
+    try {
+      const updated = await characterGalleryApi.renameReference(
+        editingCharacterId,
+        galleryRenameItem.id,
+        name,
+      )
+      setGalleryItems((current) => current.map((item) => item.id === updated.id ? updated : item))
+      setGalleryRenameItem(null)
+      toast.success(t('characterEditor.galleryReferenceRenamed', { reference: updated.reference }))
+    } catch (err: any) {
+      toast.error(err?.body?.error || err?.message || t('characterEditor.galleryReferenceRenameFailed'))
+    } finally {
+      setGalleryRenaming(false)
+    }
+  }, [editingCharacterId, galleryRenameItem, t])
+
   const galleryContextMenuItems: ContextMenuEntry[] = galleryContextMenu ? [
+    {
+      key: 'rename-image-reference',
+      label: t('characterEditor.renameImageReference'),
+      icon: <Pencil size={14} />,
+      onClick: () => {
+        setGalleryRenameItem(galleryContextMenu.item)
+        setGalleryContextMenu(null)
+      },
+    },
     {
       key: 'copy-image-reference',
       label: t('characterEditor.copyImageReference'),
@@ -2815,6 +2852,24 @@ export default function CharacterEditorPage() {
       onClose={() => setGalleryContextMenu(null)}
     />
     <ImageLightbox src={galleryLightboxSrc} onClose={() => setGalleryLightboxSrc(null)} />
+    {galleryRenameItem && (
+      <ConfirmationModal
+        isOpen={true}
+        title={t('characterEditor.renameImageReference')}
+        message={t('characterEditor.renameImageReferenceHelper')}
+        variant="safe"
+        inputLabel={t('characterEditor.galleryReferenceName')}
+        inputPlaceholder={t('characterEditor.galleryReferenceNamePlaceholder')}
+        defaultInputValue={galleryRenameItem.reference.replace(/^gallery:\/\//, '')}
+        confirmText={tc('actions.save')}
+        loading={galleryRenaming}
+        loadingText={t('characterEditor.renamingImageReference')}
+        onConfirm={(value) => void handleGalleryReferenceRename(value)}
+        onCancel={() => {
+          if (!galleryRenaming) setGalleryRenameItem(null)
+        }}
+      />
+    )}
     {activeExtensionTab?.guide && (
   <GuideViewer
     isOpen={guideOpen}

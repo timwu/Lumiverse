@@ -498,19 +498,9 @@ test('Property 1 streaming matrix: pending same-message resolutions never expose
   const { act, createElement } = await import('react')
   const { createRoot } = await import('react-dom/client')
   const {
-    resetDisplayCoalesceForTests,
-    setDisplayCoalesceDepsForTests,
+    resetDisplayRegexCachesForTests,
     useDisplayRegex,
   } = await import('../src/hooks/useDisplayRegex')
-  let now = 1_000
-  setDisplayCoalesceDepsForTests({
-    now: () => (now += 1_000),
-    scheduleTimer: (fn) => {
-      let active = true
-      queueMicrotask(() => { if (active) fn() })
-      return () => { active = false }
-    },
-  })
 
   const host = document.createElement('div')
   document.body.append(host)
@@ -578,7 +568,7 @@ test('Property 1 streaming matrix: pending same-message resolutions never expose
   } finally {
     await act(async () => root.unmount())
     host.remove()
-    resetDisplayCoalesceForTests()
+    resetDisplayRegexCachesForTests()
     pendingRegexResults.clear()
   }
 })

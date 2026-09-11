@@ -9,6 +9,9 @@ import type { MacroGroup } from '@/lib/loom/types'
 export interface NormalizedLoomOptions {
   value: SpindleLoomBlockEditorValue
   onChange?: (value: SpindleLoomBlockEditorValue) => void
+  onDraftChange?: (value: SpindleLoomBlockEditorValue | null) => void
+  selectedBlockId?: string | null
+  onSelectedBlockChange?: (blockId: string | null) => void
   readOnly: boolean
   compact: boolean
 }
@@ -87,6 +90,9 @@ const LOOM_VALUE_KEYS: Record<string, true> = {
 const LOOM_OPTION_KEYS: Record<string, true> = {
   value: true,
   onChange: true,
+  onDraftChange: true,
+  selectedBlockId: true,
+  onSelectedBlockChange: true,
   readOnly: true,
   compact: true,
 }
@@ -874,12 +880,25 @@ export function cloneLoomOptions(options: unknown): NormalizedLoomOptions {
   assertExactKeys(record, LOOM_OPTION_KEYS, 'options')
   if (!Object.prototype.hasOwnProperty.call(record, 'value')) throw new Error('Invalid Loom options.value')
   const onChange = record.onChange
+  const onDraftChange = record.onDraftChange
+  const onSelectedBlockChange = record.onSelectedBlockChange
+  const selectedBlockId = record.selectedBlockId
   if (onChange !== undefined && typeof onChange !== 'function') throw new Error('Invalid Loom options.onChange')
+  if (onDraftChange !== undefined && typeof onDraftChange !== 'function') throw new Error('Invalid Loom options.onDraftChange')
+  if (onSelectedBlockChange !== undefined && typeof onSelectedBlockChange !== 'function') {
+    throw new Error('Invalid Loom options.onSelectedBlockChange')
+  }
+  if (selectedBlockId !== undefined && selectedBlockId !== null) {
+    assertString(selectedBlockId, 'options.selectedBlockId', true)
+  }
   if (record.readOnly !== undefined) assertBoolean(record.readOnly, 'options.readOnly')
   if (record.compact !== undefined) assertBoolean(record.compact, 'options.compact')
   return {
     value: cloneLoomValue(record.value),
     onChange: onChange as ((value: SpindleLoomBlockEditorValue) => void) | undefined,
+    onDraftChange: onDraftChange as ((value: SpindleLoomBlockEditorValue | null) => void) | undefined,
+    selectedBlockId: selectedBlockId as string | null | undefined,
+    onSelectedBlockChange: onSelectedBlockChange as ((blockId: string | null) => void) | undefined,
     readOnly: record.readOnly === true,
     compact: record.compact !== false,
   }
@@ -891,6 +910,9 @@ export function patchLoomOptions(current: NormalizedLoomOptions, patch: unknown)
   const next: NormalizedLoomOptions = {
     value: current.value,
     onChange: current.onChange,
+    onDraftChange: current.onDraftChange,
+    selectedBlockId: current.selectedBlockId,
+    onSelectedBlockChange: current.onSelectedBlockChange,
     readOnly: current.readOnly,
     compact: current.compact,
   }
@@ -900,6 +922,24 @@ export function patchLoomOptions(current: NormalizedLoomOptions, patch: unknown)
       throw new Error('Invalid Loom options.onChange')
     }
     next.onChange = record.onChange as typeof next.onChange
+  }
+  if (Object.prototype.hasOwnProperty.call(record, 'onDraftChange')) {
+    if (record.onDraftChange !== undefined && typeof record.onDraftChange !== 'function') {
+      throw new Error('Invalid Loom options.onDraftChange')
+    }
+    next.onDraftChange = record.onDraftChange as typeof next.onDraftChange
+  }
+  if (Object.prototype.hasOwnProperty.call(record, 'selectedBlockId')) {
+    if (record.selectedBlockId !== undefined && record.selectedBlockId !== null) {
+      assertString(record.selectedBlockId, 'options.selectedBlockId', true)
+    }
+    next.selectedBlockId = record.selectedBlockId as string | null | undefined
+  }
+  if (Object.prototype.hasOwnProperty.call(record, 'onSelectedBlockChange')) {
+    if (record.onSelectedBlockChange !== undefined && typeof record.onSelectedBlockChange !== 'function') {
+      throw new Error('Invalid Loom options.onSelectedBlockChange')
+    }
+    next.onSelectedBlockChange = record.onSelectedBlockChange as typeof next.onSelectedBlockChange
   }
   if (Object.prototype.hasOwnProperty.call(record, 'readOnly')) {
     next.readOnly = assertBoolean(record.readOnly, 'options.readOnly')

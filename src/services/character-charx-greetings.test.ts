@@ -6,7 +6,7 @@ import { closeDatabase, getDb, initDatabase } from "../db/connection";
 import { env } from "../env";
 import { extractCardFromCharx } from "./character-card.service";
 import { exportAsCharx } from "./character-export.service";
-import { addToGallery, listGallery } from "./character-gallery.service";
+import { addToGallery, listGallery, renameGalleryReference } from "./character-gallery.service";
 import { applyCharxModulesAndAssets } from "./charx-import.service";
 import {
   createCharacter,
@@ -155,6 +155,53 @@ describe("CHARX greeting metadata and backgrounds", () => {
       mainGreeting: { id: "main-id", title: "First Meeting" },
       greetings: { "alternate-id": { id: "alternate-id", title: "Welcome Back", contentHash: 42 } },
       unknown_greeting_tools_field: "keep me too",
+    });
+  });
+
+  test("round-trips a custom gallery reference to a new local image ID", async () => {
+    const character = createCharacter(USER_ID, {
+      name: "Named Gallery Character",
+    });
+    const avatar = await uploadTestImage("named-gallery-avatar.png");
+    setCharacterImage(USER_ID, character.id, avatar.id);
+    const image = await uploadTestImage("opening-scene.png");
+    const item = addToGallery(USER_ID, character.id, image.id, "Opening scene");
+    updateCharacter(USER_ID, character.id, {
+      first_mes: `![Opening scene](${item.reference})`,
+    });
+    renameGalleryReference(USER_ID, character.id, item.id, "Opening Scene");
+
+    const archive = await exportAsCharx(USER_ID, character.id);
+    expect(archive).not.toBeNull();
+    const archiveBytes = new Uint8Array(archive!.byteLength);
+    archiveBytes.set(archive!);
+    const extracted = await extractCardFromCharx(
+      new File([archiveBytes], "named-gallery.charx", { type: "application/zip" }),
+    );
+    expect(extracted.card.first_mes).toBe("![Opening scene](gallery://opening-scene)");
+    expect([...extracted.assetFiles.keys()]).toContain(
+      "assets/other/image/gallery_opening-scene.png",
+    );
+
+    const imported = createCharacter(USER_ID, extracted.card);
+    await applyCharxModulesAndAssets(USER_ID, imported, extracted);
+    await waitForDeferredImageProcessing();
+
+    const importedItem = listGallery(USER_ID, imported.id).find(
+      (galleryItem) => galleryItem.reference === "gallery://opening-scene",
+    );
+    expect(importedItem).toBeDefined();
+    expect(importedItem!.image_id).not.toBe(image.id);
+    expect(getCharacter(USER_ID, imported.id)).toMatchObject({
+      first_mes: "![Opening scene](gallery://opening-scene)",
+      extensions: {
+        gallery_reference_names: {
+          [importedItem!.image_id]: "gallery://opening-scene",
+        },
+        risu_asset_map: {
+          "gallery://opening-scene": importedItem!.image_id,
+        },
+      },
     });
   });
 });

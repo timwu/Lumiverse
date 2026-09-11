@@ -1121,6 +1121,25 @@
   background: var(--lumiverse-fill-subtle);
 }
 
+.galleryReferenceBadge {
+  position: absolute;
+  left: 5px;
+  bottom: 5px;
+  max-width: calc(100% - 10px);
+  padding: 3px 6px;
+  overflow: hidden;
+  border: 1px solid color-mix(in srgb, var(--lumiverse-border) 65%, transparent);
+  border-radius: 5px;
+  background: color-mix(in srgb, var(--lumiverse-bg-dark) 86%, transparent);
+  color: var(--lumiverse-text);
+  font-size: calc(10px * var(--lumiverse-font-scale, 1));
+  line-height: 1.2;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  pointer-events: none;
+  backdrop-filter: blur(5px);
+}
+
 .galleryRemoveBtn {
   position: absolute;
   top: 4px;

@@ -8,17 +8,60 @@ import { EventType } from "../ws/events";
 import {
   createCanonicalGalleryImageReference,
   createGalleryImageReference,
-  findCanonicalGalleryImageReference,
   findGalleryImageReference,
+  normalizeGalleryImageReferenceName,
   parseCanonicalGalleryImageReference,
   parseGalleryImageReference,
 } from "../utils/gallery-image-reference";
 
 const GALLERY_REFERENCE_SEQUENCE_KEY = "gallery_reference_sequence";
+export const GALLERY_REFERENCE_NAMES_KEY = "gallery_reference_names";
 
-function rowToGalleryItem(row: any, assetMap?: unknown): CharacterGalleryItem {
-  const reference = findCanonicalGalleryImageReference(assetMap, row.image_id)
-    ?? findGalleryImageReference(assetMap, row.image_id, row.id)
+interface GalleryReferenceRegistration {
+  assetMap: Record<string, string>;
+  referenceNames: Record<string, string>;
+}
+
+export class GalleryReferenceConflictError extends Error {
+  constructor() {
+    super("That gallery reference name is already in use");
+    this.name = "GalleryReferenceConflictError";
+  }
+}
+
+export class InvalidGalleryReferenceNameError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "InvalidGalleryReferenceNameError";
+  }
+}
+
+function asStringMap(value: unknown): Record<string, string> {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return {};
+  return Object.fromEntries(
+    Object.entries(value).filter((entry): entry is [string, string] => typeof entry[1] === "string"),
+  );
+}
+
+function primaryGalleryReference(
+  assetMap: Record<string, string>,
+  referenceNames: Record<string, string>,
+  imageId: string,
+  preferredToken?: string,
+): string | null {
+  const namedReference = referenceNames[imageId];
+  if (namedReference && assetMap[namedReference] === imageId && parseGalleryImageReference(namedReference)) {
+    return namedReference;
+  }
+  return findGalleryImageReference(assetMap, imageId, preferredToken);
+}
+
+function rowToGalleryItem(
+  row: any,
+  assetMap: Record<string, string> = {},
+  referenceNames: Record<string, string> = {},
+): CharacterGalleryItem {
+  const reference = primaryGalleryReference(assetMap, referenceNames, row.image_id, row.id)
     ?? createGalleryImageReference(row.id);
   return {
     id: row.id,
@@ -48,31 +91,42 @@ export function listGallery(
     )
     .all(userId, characterId) as any[];
 
-  const assetMap = registerGalleryReferences(userId, characterId, rows);
-  return rows.map((row) => rowToGalleryItem(row, assetMap));
+  const registration = registerGalleryReferences(userId, characterId, rows);
+  return rows.map((row) => rowToGalleryItem(row, registration.assetMap, registration.referenceNames));
 }
+
+const GALLERY_REFERENCE_IN_TEXT_RE = /gallery:\/\/[A-Za-z0-9][A-Za-z0-9._-]{0,127}/g;
 
 function replaceGalleryReferences(
   value: string,
   replacements: Map<string, string>,
 ): string {
-  let next = value;
-  for (const [from, to] of replacements) next = next.split(from).join(to);
-  return next;
+  return value.replace(GALLERY_REFERENCE_IN_TEXT_RE, (reference) => replacements.get(reference) ?? reference);
+}
+
+function replaceGalleryReferencesDeep(value: unknown, replacements: Map<string, string>): unknown {
+  if (typeof value === "string") return replaceGalleryReferences(value, replacements);
+  if (Array.isArray(value)) return value.map((entry) => replaceGalleryReferencesDeep(entry, replacements));
+  if (!value || typeof value !== "object") return value;
+
+  return Object.fromEntries(
+    Object.entries(value).map(([key, entry]) => [
+      replaceGalleryReferences(key, replacements),
+      replaceGalleryReferencesDeep(entry, replacements),
+    ]),
+  );
 }
 
 function registerGalleryReferences(
   userId: string,
   characterId: string,
   items: Array<Pick<CharacterGalleryItem, "id" | "image_id">>,
-): Record<string, string> {
-  if (items.length === 0) return {};
+): GalleryReferenceRegistration {
+  if (items.length === 0) return { assetMap: {}, referenceNames: {} };
   const character = getCharacter(userId, characterId);
-  if (!character) return {};
-  const current = character.extensions?.risu_asset_map;
-  const assetMap: Record<string, string> = current && typeof current === "object" && !Array.isArray(current)
-    ? { ...current }
-    : {};
+  if (!character) return { assetMap: {}, referenceNames: {} };
+  const assetMap = asStringMap(character.extensions?.risu_asset_map);
+  const referenceNames = asStringMap(character.extensions?.[GALLERY_REFERENCE_NAMES_KEY]);
   let changed = false;
   const storedSequence = Number.isSafeInteger(character.extensions?.[GALLERY_REFERENCE_SEQUENCE_KEY])
     ? Math.max(0, character.extensions[GALLERY_REFERENCE_SEQUENCE_KEY])
@@ -84,10 +138,14 @@ function registerGalleryReferences(
   if (sequence !== storedSequence) changed = true;
   const replacements = new Map<string, string>();
   for (const item of items) {
-    let reference = findCanonicalGalleryImageReference(assetMap, item.image_id);
+    let reference = primaryGalleryReference(assetMap, referenceNames, item.image_id);
     if (!reference) {
       reference = createCanonicalGalleryImageReference(++sequence);
       assetMap[reference] = item.image_id;
+      changed = true;
+    }
+    if (referenceNames[item.image_id] !== reference) {
+      referenceNames[item.image_id] = reference;
       changed = true;
     }
     const legacyReference = createGalleryImageReference(item.id);
@@ -100,6 +158,7 @@ function registerGalleryReferences(
         ...(character.extensions || {}),
         risu_asset_map: assetMap,
         [GALLERY_REFERENCE_SEQUENCE_KEY]: sequence,
+        [GALLERY_REFERENCE_NAMES_KEY]: referenceNames,
       },
     };
     const textFields = [
@@ -124,7 +183,7 @@ function registerGalleryReferences(
     }
     updateCharacter(userId, characterId, updates);
   }
-  return assetMap;
+  return { assetMap, referenceNames };
 }
 
 export function addToGallery(
@@ -222,9 +281,13 @@ export async function uploadBulkToGallery(
     }
   }
 
-  const assetMap = registerGalleryReferences(userId, characterId, items);
+  const registration = registerGalleryReferences(userId, characterId, items);
   for (const item of items) {
-    item.reference = findCanonicalGalleryImageReference(assetMap, item.image_id)
+    item.reference = primaryGalleryReference(
+      registration.assetMap,
+      registration.referenceNames,
+      item.image_id,
+    )
       ?? item.reference;
   }
 
@@ -253,9 +316,16 @@ export function removeFromGallery(userId: string, itemId: string): boolean {
             imageId !== row.image_id || !parseGalleryImageReference(reference)
           ),
         );
-        if (Object.keys(assetMap).length !== Object.keys(current).length) {
+        const referenceNames = asStringMap(character.extensions?.[GALLERY_REFERENCE_NAMES_KEY]);
+        const hadReferenceName = Object.hasOwn(referenceNames, row.image_id);
+        delete referenceNames[row.image_id];
+        if (Object.keys(assetMap).length !== Object.keys(current).length || hadReferenceName) {
           updateCharacter(userId, row.character_id, {
-            extensions: { ...(character.extensions || {}), risu_asset_map: assetMap },
+            extensions: {
+              ...(character.extensions || {}),
+              risu_asset_map: assetMap,
+              [GALLERY_REFERENCE_NAMES_KEY]: referenceNames,
+            },
           });
         }
       }
@@ -279,6 +349,104 @@ export function updateCaption(
   return getGalleryItem(userId, itemId);
 }
 
+/**
+ * Assign a friendly, portable `gallery://` name to one gallery image.
+ * Previous references remain as local aliases so old chat messages keep
+ * rendering, while card-owned content is rewritten to the new primary name.
+ */
+export function renameGalleryReference(
+  userId: string,
+  characterId: string,
+  itemId: string,
+  name: string,
+): CharacterGalleryItem | null {
+  const row = getDb()
+    .query("SELECT id, character_id, image_id FROM character_gallery WHERE id = ? AND user_id = ?")
+    .get(itemId, userId) as { id: string; character_id: string; image_id: string } | null;
+  if (!row || row.character_id !== characterId) return null;
+
+  let token: string;
+  try {
+    token = normalizeGalleryImageReferenceName(name);
+  } catch (error) {
+    throw new InvalidGalleryReferenceNameError(
+      error instanceof Error ? error.message : "Invalid gallery reference name",
+    );
+  }
+  const nextReference = createGalleryImageReference(token);
+
+  // Ensure legacy gallery rows have a registered reference before renaming.
+  registerGalleryReferences(userId, characterId, [{ id: row.id, image_id: row.image_id }]);
+  const character = getCharacter(userId, characterId);
+  if (!character) return null;
+  const currentAssetMap = asStringMap(character.extensions?.risu_asset_map);
+  const currentReferenceNames = asStringMap(character.extensions?.[GALLERY_REFERENCE_NAMES_KEY]);
+  const currentReference = primaryGalleryReference(
+    currentAssetMap,
+    currentReferenceNames,
+    row.image_id,
+    row.id,
+  );
+
+  const conflictingImageId = currentAssetMap[nextReference];
+  if (conflictingImageId && conflictingImageId !== row.image_id) {
+    throw new GalleryReferenceConflictError();
+  }
+  if (currentReference === nextReference) {
+    return getGalleryItem(userId, itemId);
+  }
+
+  const aliases = Object.entries(currentAssetMap)
+    .filter(([reference, imageId]) => imageId === row.image_id && parseGalleryImageReference(reference))
+    .map(([reference]) => reference);
+  if (currentReference && !aliases.includes(currentReference)) aliases.push(currentReference);
+  const legacyReference = createGalleryImageReference(row.id);
+  if (!aliases.includes(legacyReference)) aliases.push(legacyReference);
+
+  // Insert the new key first for older readers that do not understand the
+  // explicit primary-reference metadata, then retain aliases for local chats.
+  const assetMap: Record<string, string> = { [nextReference]: row.image_id };
+  for (const [reference, imageId] of Object.entries(currentAssetMap)) {
+    if (reference !== nextReference) assetMap[reference] = imageId;
+  }
+  const referenceNames = {
+    ...currentReferenceNames,
+    [row.image_id]: nextReference,
+  };
+  const replacements = new Map(aliases.map((reference) => [reference, nextReference]));
+  const replacedExtensions = replaceGalleryReferencesDeep(character.extensions || {}, replacements) as Record<string, unknown>;
+  const updates: Parameters<typeof updateCharacter>[2] = {
+    extensions: {
+      ...replacedExtensions,
+      risu_asset_map: assetMap,
+      [GALLERY_REFERENCE_NAMES_KEY]: referenceNames,
+    },
+  };
+  const textFields = [
+    "first_mes",
+    "description",
+    "personality",
+    "scenario",
+    "mes_example",
+    "system_prompt",
+    "post_history_instructions",
+    "creator_notes",
+  ] as const;
+  for (const field of textFields) {
+    const currentValue = character[field] || "";
+    const nextValue = replaceGalleryReferences(currentValue, replacements);
+    if (nextValue !== currentValue) updates[field] = nextValue;
+  }
+  const alternateGreetings = character.alternate_greetings || [];
+  const nextAlternateGreetings = alternateGreetings.map((value) => replaceGalleryReferences(value, replacements));
+  if (nextAlternateGreetings.some((value, index) => value !== alternateGreetings[index])) {
+    updates.alternate_greetings = nextAlternateGreetings;
+  }
+
+  updateCharacter(userId, characterId, updates);
+  return getGalleryItem(userId, itemId);
+}
+
 function getGalleryItem(
   userId: string,
   itemId: string
@@ -297,10 +465,14 @@ function getGalleryItem(
   const characterId = getDb()
     .query("SELECT character_id FROM character_gallery WHERE id = ? AND user_id = ?")
     .get(itemId, userId) as { character_id: string } | null;
-  const assetMap = characterId
-    ? getCharacter(userId, characterId.character_id)?.extensions?.risu_asset_map
-    : undefined;
-  return rowToGalleryItem(row, assetMap);
+  const character = characterId
+    ? getCharacter(userId, characterId.character_id)
+    : null;
+  return rowToGalleryItem(
+    row,
+    asStringMap(character?.extensions?.risu_asset_map),
+    asStringMap(character?.extensions?.[GALLERY_REFERENCE_NAMES_KEY]),
+  );
 }
 
 // ── Image extraction from character data ──

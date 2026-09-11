@@ -1390,31 +1390,37 @@ function LoomBlockEditorBridge({
     }
   }, [getMacroCatalogForExtension, extensionIdentifier])
 
+  const buildPublicValue = (
+    blocks: PromptBlock[],
+    previousValue: SpindleLoomBlockEditorValue,
+  ): SpindleLoomBlockEditorValue => {
+    // Blocks arrive from the host block editor, which emits host-only
+    // fields on every save (placementBinding, and seal metadata when
+    // trusted features are on). The public DTO rejects them by design, so
+    // strip them at the boundary before validating.
+    const publicBlocks = blocks.map((block) => {
+      const clean = { ...block } as Record<string, unknown>
+      for (const key of HOST_ONLY_BLOCK_FIELDS) delete clean[key]
+      return clean as unknown as PromptBlock
+    })
+    const normalizedBlocks = normalizeCategoryBlockState(publicBlocks)
+    return cloneLoomValue({
+      blocks: normalizedBlocks,
+      promptVariableValues: reconcilePromptVariableValues(
+        previousValue.promptVariableValues,
+        previousValue.blocks,
+        normalizedBlocks,
+      ),
+    })
+  }
+
   const handleChange = (blocks: PromptBlock[]): boolean => {
     if (!aliveRef.current) return false
     const previousProps = propsRef.current
     const previousValue = valueRef.current
     let cloned: SpindleLoomBlockEditorValue
     try {
-      // Blocks arrive from the host block editor, which emits host-only
-      // fields on every save (placementBinding, and seal metadata when
-      // trusted features are on). The public DTO rejects them by design, so
-      // strip them at the boundary before validating — otherwise every save
-      // fails with "unknown field" and the editor reports validationFailed.
-      const publicBlocks = blocks.map((block) => {
-        const clean = { ...block } as Record<string, unknown>
-        for (const key of HOST_ONLY_BLOCK_FIELDS) delete clean[key]
-        return clean as unknown as PromptBlock
-      })
-      const normalizedBlocks = normalizeCategoryBlockState(publicBlocks)
-      cloned = cloneLoomValue({
-        blocks: normalizedBlocks,
-        promptVariableValues: reconcilePromptVariableValues(
-          previousValue.promptVariableValues,
-          previousValue.blocks,
-          normalizedBlocks,
-        ),
-      })
+      cloned = buildPublicValue(blocks, previousValue)
     } catch {
       return false
     }
@@ -1427,6 +1433,31 @@ function LoomBlockEditorBridge({
 
     notifyComponentOnChange('Loom', nextProps.onChange, cloneLoomValue(cloned))
     return true
+  }
+
+  const handleDraftChange = (blockId: string, updates: Partial<PromptBlock> | null): void => {
+    if (!aliveRef.current) return
+    const currentProps = propsRef.current
+    if (updates === null) {
+      notifyComponentOnChange('Loom draft', currentProps.onDraftChange, null)
+      return
+    }
+    try {
+      const currentValue = valueRef.current
+      const draftBlocks = (currentValue.blocks as PromptBlock[]).map((block) => (
+        block.id === blockId ? { ...block, ...updates } : block
+      ))
+      const draft = buildPublicValue(draftBlocks, currentValue)
+      notifyComponentOnChange('Loom draft', currentProps.onDraftChange, draft)
+    } catch {
+      // The public draft callback is intentionally validated. Transient invalid
+      // editor state stays inside the native component until it becomes valid.
+    }
+  }
+
+  const handleSelectedBlockChange = (blockId: string | null): void => {
+    if (!aliveRef.current) return
+    notifyComponentOnChange('Loom selection', propsRef.current.onSelectedBlockChange, blockId)
   }
 
   useLayoutEffect(() => {
@@ -1455,6 +1486,9 @@ function LoomBlockEditorBridge({
       blocks={valueState.blocks as PromptBlock[]}
       promptVariables={valueState.promptVariableValues as PromptVariableValues}
       onChange={handleChange}
+      onDraftChange={handleDraftChange}
+      selectedBlockId={props.selectedBlockId}
+      onSelectedBlockChange={handleSelectedBlockChange}
       availableMacros={availableMacros}
       refreshMacros={() => { void refreshMacros().catch(() => {}) }}
       readOnly={props.readOnly}

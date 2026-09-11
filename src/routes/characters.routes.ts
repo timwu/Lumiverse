@@ -94,6 +94,7 @@ const LOCAL_CHARACTER_EXTENSION_KEYS = new Set([
   "original_image_id",
   "risu_asset_map",
   "gallery_reference_sequence",
+  "gallery_reference_names",
   "landing_perspective_layers",
   "ttsVoice",
 ]);
