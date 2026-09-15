@@ -861,6 +861,9 @@ export default function SpindlePanel() {
                             </span>
                           )}
                         </span>
+                        {(ext.metadata as any)?.illarin?.withheldAt && (
+                          <span className={styles.extensionMeta}>{t('spindlePanel.illarinWithheld')}</span>
+                        )}
                         {extensionViewMode === 'list' && allPerms.length > 0 && (
                           <span className={styles.extensionMeta}>
                             {t('spindlePanel.permissionsCompact', {

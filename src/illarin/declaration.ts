@@ -33,6 +33,8 @@ export const ILLARIN_CAPABILITIES = Object.freeze([
   "theme-install",
 ].map((name) => `${ILLARIN_CAPABILITY_NAMESPACE}:${name}`));
 
+export const EXTENSION_INSTALL_CAPABILITY = `${ILLARIN_CAPABILITY_NAMESPACE}:extension-install`;
+
 /**
  * Export targets Lumiverse can read, ordered most → least preferred.
  * Illarin delivers using the first supported entry and falls back to `raw`.
@@ -48,6 +50,7 @@ export const ILLARIN_ACCEPTED_TARGETS = Object.freeze([
   "preset_sillytavern",
   "theme_lumiverse",
   "pack_lumiverse",
+  "extension_spindle",
 ]);
 
 export interface DeclarationInput {
@@ -55,6 +58,7 @@ export interface DeclarationInput {
   instanceName: string;
   applicationVersion?: string;
   scopes: readonly IllarinScope[];
+  installsExtensions?: boolean;
 }
 
 /** Build and wire-validate the link-time declaration. */
@@ -64,7 +68,9 @@ export function buildDeclaration(input: DeclarationInput): IllarinDeclaration {
     instanceName: input.instanceName.trim(),
     ...(input.applicationVersion === undefined ? {} : { applicationVersion: input.applicationVersion.trim() }),
     protocolVersion: ILLARIN_PROTOCOL_VERSION,
-    capabilities: [...ILLARIN_CAPABILITIES],
+    capabilities: input.installsExtensions
+      ? [...ILLARIN_CAPABILITIES, EXTENSION_INSTALL_CAPABILITY]
+      : [...ILLARIN_CAPABILITIES],
     acceptedTargets: [...ILLARIN_ACCEPTED_TARGETS],
     scopes: [...input.scopes],
   };

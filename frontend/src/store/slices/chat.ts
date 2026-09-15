@@ -199,6 +199,7 @@ export const createChatSlice: StateCreator<ChatSlice> = (set, get) => {
       })
       // Clear expression state so stale expressions from the previous character don't linger
       ;(get() as any).setActiveExpression?.(null, null, null)
+      ;(get() as any).clearMultiCharacterExpressions?.()
       // Clear lore activation state so entries from the previous chat are not shown
       // while the new chat waits for its first generation event.
       ;(get() as any).clearActivatedWorldInfo?.()

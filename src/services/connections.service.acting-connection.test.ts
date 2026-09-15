@@ -679,6 +679,11 @@ describe("dispatcher — credential failures are terminal", () => {
       endedGenerationIds: ended.map((payload) => payload.generationId),
       endedNamesConnection: ended.every((payload) =>
         String(payload.error).includes("Unrelated Custom Endpoint")),
+      endedFailureMetadata: ended.map((payload) => ({
+        errorCode: payload.errorCode,
+        errorMessage: payload.errorMessage,
+        connectionName: payload.connectionName,
+      })),
     }).toEqual({
       status: "failed",
       terminalReason: "credential_unresolved",
@@ -688,6 +693,11 @@ describe("dispatcher — credential failures are terminal", () => {
       leaseOwner: null,
       endedGenerationIds: ["gen-credential"],
       endedNamesConnection: true,
+      endedFailureMetadata: [{
+        errorCode: "credential_unresolved",
+        errorMessage: credentialError().message,
+        connectionName: "Unrelated Custom Endpoint",
+      }],
     });
 
     // Never re-dispatched on any later tick or recovery pass.

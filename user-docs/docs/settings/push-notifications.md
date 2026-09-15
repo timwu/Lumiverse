@@ -32,7 +32,7 @@ Each device must be subscribed individually. You can manage all your registered 
 | Event | Notification |
 |-------|-------------|
 | **Generation completed** | Character name as title, first 120 characters of the response as body |
-| **Generation failed** | "Generation Failed" as title, error message as body |
+| **Generation failed** | Connection name in the title, with the error code and message in the body |
 
 Each event type can be enabled or disabled independently.
 

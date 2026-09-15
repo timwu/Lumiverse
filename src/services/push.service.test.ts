@@ -5,13 +5,23 @@ import { eventBus } from "../ws/bus";
 
 const db = new Database(":memory:");
 db.exec(await Bun.file(new URL("../db/migrations/035_push_subscriptions.sql", import.meta.url)).text());
+let pushNotificationPreferences: Record<string, unknown> | null = null;
+const builtPayloads: Array<Record<string, unknown>> = [];
 mock.module("../db/connection", () => ({ getDb: () => db }));
-mock.module("./settings.service", () => ({ getSetting: () => null }));
+mock.module("./settings.service", () => ({
+  getSetting: () => pushNotificationPreferences === null
+    ? null
+    : { value: pushNotificationPreferences },
+}));
 mock.module("../crypto/vapid", () => ({ getVapidPrivateJWK: () => ({}), getVapidPublicKey: () => "test-key" }));
 mock.module("@pushforge/builder", () => ({
-  buildPushHTTPRequest: async ({ subscription }: { subscription: { endpoint: string } }) => ({
-    endpoint: subscription.endpoint, headers: {}, body: "encrypted-payload",
-  }),
+  buildPushHTTPRequest: async ({ subscription, message }: {
+    subscription: { endpoint: string };
+    message: { payload: Record<string, unknown> };
+  }) => {
+    builtPayloads.push(message.payload);
+    return { endpoint: subscription.endpoint, headers: {}, body: "encrypted-payload" };
+  },
 }));
 const validateHost = mock(async (_hostname: string) => {});
 mock.module("../utils/safe-fetch", () => ({ validateHost, SSRFError: class extends Error {} }));
@@ -30,6 +40,8 @@ app.route("/push", pushRoutes);
 beforeEach(() => {
   db.exec("DELETE FROM push_subscriptions");
   fetchMock.mockClear();
+  builtPayloads.length = 0;
+  pushNotificationPreferences = null;
   validateHost.mockReset();
   validateHost.mockImplementation(async () => {});
   for (const device of ["phone", "desktop"]) {
@@ -71,6 +83,46 @@ describe("push presence suppression", () => {
   test("delivers when no app sessions are connected", async () => {
     expect(await dispatchGenerationEndedPush(userId, { content: "Done" })).toEqual({ sent: 2 });
     expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  test("includes generation failure diagnostics and connection name", async () => {
+    expect(await dispatchGenerationEndedPush(userId, {
+      chatId: "chat-1",
+      error: "OpenAI stream failed (429): Too many requests",
+      errorCode: "rate_limit_exceeded",
+      errorMessage: "OpenAI stream failed (429): Too many requests",
+      connectionName: "Primary OpenAI",
+    })).toEqual({ sent: 2 });
+
+    expect(builtPayloads).toHaveLength(2);
+    expect(builtPayloads[0]).toMatchObject({
+      title: "Generation Failed · Primary OpenAI",
+      body: "[rate_limit_exceeded] OpenAI stream failed (429): Too many requests",
+      tag: "generation-error-chat-1",
+      data: {
+        url: "/chat/chat-1",
+        chatId: "chat-1",
+        connectionName: "Primary OpenAI",
+        errorCode: "rate_limit_exceeded",
+        errorMessage: "OpenAI stream failed (429): Too many requests",
+      },
+    });
+  });
+
+  test("honors an explicit generation failure notification opt-out", async () => {
+    pushNotificationPreferences = {
+      enabled: true,
+      events: { generation_ended: true, generation_error: false },
+    };
+
+    expect(await dispatchGenerationEndedPush(userId, {
+      error: "Provider unavailable",
+      errorCode: "unavailable",
+      errorMessage: "Provider unavailable",
+      connectionName: "Local model",
+    })).toEqual({ sent: 0, reason: "event_disabled" });
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(builtPayloads).toHaveLength(0);
   });
 
   test("cancels delivery if the user returns during push preparation", async () => {

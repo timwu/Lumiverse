@@ -1060,6 +1060,8 @@ export interface ImageGenSettings {
   promptMode?: 'scene' | 'custom' | 'parsed_custom'
   customPrompt?: string
   customNegativePrompt?: string
+  /** Last prompt entered in the Image Captioner modal. */
+  captionPrompt?: string
   activePromptPresetId?: string | null
   promptPresets?: ImageGenPromptPreset[]
   loraPresets?: LoraPreset[]
@@ -1667,12 +1669,16 @@ export interface ExpressionSlice {
   expressionDisplay: ExpressionDisplaySettings
   /** Per-character expression state for group chats (characterId → label+imageId) */
   groupExpressions: Record<string, GroupExpressionEntry>
+  /** Per-group sprite state for a single card containing multiple characters. */
+  multiCharacterExpressions: Record<string, GroupExpressionEntry>
   /** Character currently generating a response (set via GENERATION_STARTED, cleared on GENERATION_ENDED) */
   respondingCharacterId: string | null
   setActiveExpression: (label: string | null, imageId: string | null, characterId: string | null) => void
   setGroupExpression: (characterId: string, label: string, imageId: string) => void
   setGroupExpressions: (map: Record<string, GroupExpressionEntry>) => void
   clearGroupExpressions: () => void
+  setMultiCharacterExpressions: (map: Record<string, GroupExpressionEntry>) => void
+  clearMultiCharacterExpressions: () => void
   setRespondingCharacterId: (characterId: string | null) => void
   setExpressionDisplay: (partial: Partial<ExpressionDisplaySettings>) => void
   toggleExpressionMinimized: () => void

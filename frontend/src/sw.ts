@@ -147,7 +147,14 @@ self.addEventListener('push', (event) => {
     title: string
     body: string
     tag?: string
-    data?: { url?: string; chatId?: string; characterName?: string }
+    data?: {
+      url?: string
+      chatId?: string
+      characterName?: string
+      connectionName?: string
+      errorCode?: string
+      errorMessage?: string
+    }
     icon?: string
     image?: string
   }

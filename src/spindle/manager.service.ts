@@ -21,6 +21,7 @@ import {
   copyFileSync,
   cpSync,
   realpathSync,
+  writeFileSync,
 } from "fs";
 import { join, resolve, dirname, sep } from "path";
 import { getUserExtensionPath } from "../auth/provision";
@@ -1257,11 +1258,6 @@ export async function install(
 
   const baseDir = extensionsDir();
   mkdirSync(baseDir, { recursive: true });
-  const installScope: InstallScope = options?.installScope === "user" ? "user" : "operator";
-  const installedByUserId =
-    options?.installedByUserId && options.installedByUserId.trim()
-      ? options.installedByUserId.trim()
-      : null;
   const branch = options?.branch && options.branch.trim() ? options.branch.trim() : null;
 
   // Clone to a temp dir first so we can read the manifest
@@ -1278,6 +1274,47 @@ export async function install(
     rmSync(tempDir, { recursive: true, force: true });
     throw new Error(`git clone failed: ${cloneProc.stderr.toString()}`);
   }
+  return installCheckout(tempDir, { ...options, branch, github: githubUrl });
+}
+
+export async function installFromFiles(
+  files: ReadonlyMap<string, Uint8Array>,
+  metadata: Record<string, unknown>,
+): Promise<ExtensionInfo> {
+  return installCheckout(writeCheckout(files), { metadata });
+}
+
+function writeCheckout(files: ReadonlyMap<string, Uint8Array>): string {
+  const checkout = join(extensionsDir(), `_temp_${Date.now()}`);
+  try {
+    for (const [path, data] of files) {
+      const target = resolveWithin(checkout, path, "archive path");
+      mkdirSync(dirname(target), { recursive: true });
+      writeFileSync(target, data);
+    }
+  } catch (err) {
+    rmSync(checkout, { recursive: true, force: true });
+    throw err;
+  }
+  return checkout;
+}
+
+async function installCheckout(
+  tempDir: string,
+  options: {
+    installScope?: InstallScope;
+    installedByUserId?: string | null;
+    branch?: string | null;
+    github?: string;
+    metadata?: Record<string, unknown>;
+  },
+): Promise<ExtensionInfo> {
+  const installScope: InstallScope = options.installScope === "user" ? "user" : "operator";
+  const installedByUserId =
+    options.installedByUserId && options.installedByUserId.trim()
+      ? options.installedByUserId.trim()
+      : null;
+  const branch = options.branch ?? null;
 
   // Read manifest from cloned repo
   const manifestPath = join(tempDir, "spindle.json");
@@ -1295,7 +1332,7 @@ export async function install(
       `Invalid identifier "${manifest.identifier}". Must match /^[a-z][a-z0-9_]*$/`
     );
   }
-  manifest.github = normalizeSpindleHttpsUrl(manifest.github || githubUrl, "github", {
+  manifest.github = normalizeSpindleHttpsUrl(manifest.github || options.github, "github", {
     required: true,
   });
   manifest.homepage = normalizeSpindleHttpsUrl(manifest.homepage, "homepage");
@@ -1337,7 +1374,7 @@ export async function install(
       id, identifier, name, version, author, description, github, homepage,
       permissions, enabled, metadata, install_scope, installed_by_user_id, branch
     )
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, '{}', ?, ?, ?)`,
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?)`,
     [
       id,
       manifest.identifier,
@@ -1348,6 +1385,7 @@ export async function install(
       manifest.github,
       manifest.homepage || "",
       JSON.stringify(manifest.permissions || []),
+      JSON.stringify(options.metadata ?? {}),
       installScope,
       installedByUserId,
       branch,
@@ -1456,15 +1494,6 @@ export async function update(identifier: string): Promise<ExtensionInfo> {
   // dev mode we already have the current version.
   const manifest = devMode ? initialManifest : await readManifest(identifier);
 
-  const db = getDb();
-  const existing = db
-    .query("SELECT permissions FROM extensions WHERE identifier = ?")
-    .get(identifier) as { permissions: string } | null;
-  const existingPermissions = existing
-    ? (JSON.parse(existing.permissions || "[]") as string[])
-    : [];
-  const existingPermissionSet = new Set(existingPermissions);
-
   // Rebuild — only delete dist/ if it was locally built (not tracked in git).
   // Repos that ship pre-built dist/ should have those files preserved.
   const srcDir = join(repo, "src");
@@ -1482,6 +1511,37 @@ export async function update(identifier: string): Promise<ExtensionInfo> {
       }
     }
   }
+  return finishUpdate(identifier, manifest);
+}
+
+export async function replaceFromFiles(
+  identifier: string,
+  files: ReadonlyMap<string, Uint8Array>,
+): Promise<ExtensionInfo> {
+  const checkout = writeCheckout(files);
+  try {
+    const manifest = await readManifestFromPath(join(checkout, "spindle.json"));
+    if (manifest.identifier !== identifier) {
+      throw new Error(`The delivered extension is "${manifest.identifier}", not "${identifier}"`);
+    }
+  } catch (err) {
+    rmSync(checkout, { recursive: true, force: true });
+    throw err;
+  }
+  rmSync(repoDir(identifier), { recursive: true, force: true });
+  moveSync(checkout, repoDir(identifier));
+  return finishUpdate(identifier, await readManifest(identifier));
+}
+
+async function finishUpdate(identifier: string, manifest: SpindleManifest): Promise<ExtensionInfo> {
+  const db = getDb();
+  const existing = db
+    .query("SELECT permissions FROM extensions WHERE identifier = ?")
+    .get(identifier) as { permissions: string } | null;
+  const existingPermissions = existing
+    ? (JSON.parse(existing.permissions || "[]") as string[])
+    : [];
+
   await buildExtension(identifier);
   applyStorageSeeds(identifier, manifest);
 
@@ -1556,6 +1616,13 @@ export function disable(identifier: string): void {
     [identifier]
   );
   if (result.changes === 0) throw new Error(`Extension not found: ${identifier}`);
+}
+
+export function setMetadataEntry(identifier: string, key: string, value: unknown): void {
+  getDb().run(
+    "UPDATE extensions SET metadata = json_set(COALESCE(metadata, '{}'), ?, json(?)) WHERE identifier = ?",
+    [`$.${key}`, JSON.stringify(value), identifier],
+  );
 }
 
 // ─── Permissions ─────────────────────────────────────────────────────────

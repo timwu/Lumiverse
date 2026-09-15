@@ -4,6 +4,7 @@ import { eventBus } from "../ws/bus";
 import { EventType } from "../ws/events";
 import { getVapidPrivateJWK } from "../crypto/vapid";
 import { validateHost, SSRFError } from "../utils/safe-fetch";
+import { clampErrorMessage } from "../utils/provider-errors";
 import { getSetting } from "./settings.service";
 import type {
   PushSubscriptionRecord,
@@ -16,6 +17,9 @@ interface GenerationEndedPushPayload {
   chatId?: string;
   content?: string;
   error?: string;
+  errorCode?: string;
+  errorMessage?: string;
+  connectionName?: string;
 }
 
 export interface PushDispatchResult {
@@ -27,7 +31,7 @@ const DEFAULT_PREFERENCES: PushNotificationPreferences = {
   enabled: true,
   events: {
     generation_ended: true,
-    generation_error: false,
+    generation_error: true,
   },
 };
 
@@ -199,7 +203,7 @@ async function buildGenerationEndedNotification(
   payload: GenerationEndedPushPayload
 ): Promise<PushPayload> {
   const chatId = payload.chatId;
-  const isError = !!payload.error;
+  const isError = !!(payload.error || payload.errorMessage || payload.errorCode);
 
   // Resolve character name for the notification title when the chat still exists.
   let characterName = "Lumiverse";
@@ -221,19 +225,48 @@ async function buildGenerationEndedNotification(
 
   const targetUrl = chatId ? `/chat/${chatId}` : "/";
 
-  return isError
-    ? {
-        title: "Generation Failed",
-        body: (payload.error as string).slice(0, 120),
-        tag: chatId ? `generation-error-${chatId}` : "generation-error-test",
-        data: { url: targetUrl, chatId, characterName },
-      }
-    : {
-        title: characterName,
-        body: (payload.content ?? "Your generation finished.").slice(0, 120),
-        tag: chatId ? `generation-${chatId}` : "generation-test",
-        data: { url: targetUrl, chatId, characterName },
-      };
+  if (isError) {
+    const connectionName = notificationText(payload.connectionName, 60);
+    const errorCode = notificationText(payload.errorCode, 80);
+    const errorMessage = notificationText(
+      payload.errorMessage || payload.error || "The generation ended with an unknown error.",
+      240,
+    );
+    const body = notificationText(
+      `${errorCode ? `[${errorCode}] ` : ""}${errorMessage}`,
+      240,
+    );
+    return {
+      title: notificationText(
+        connectionName ? `Generation Failed · ${connectionName}` : "Generation Failed",
+        100,
+      ),
+      body,
+      tag: chatId ? `generation-error-${chatId}` : "generation-error-test",
+      data: {
+        url: targetUrl,
+        chatId,
+        characterName,
+        ...(connectionName ? { connectionName } : {}),
+        ...(errorCode ? { errorCode } : {}),
+        errorMessage,
+      },
+    };
+  }
+
+  return {
+    title: characterName,
+    body: (payload.content ?? "Your generation finished.").slice(0, 120),
+    tag: chatId ? `generation-${chatId}` : "generation-test",
+    data: { url: targetUrl, chatId, characterName },
+  };
+}
+
+function notificationText(value: string | undefined, maxLength: number): string {
+  const normalized = clampErrorMessage(value).replace(/\s+/g, " ").trim();
+  return normalized.length > maxLength
+    ? `${normalized.slice(0, Math.max(0, maxLength - 1))}…`
+    : normalized;
 }
 
 export async function dispatchGenerationEndedPush(
@@ -249,7 +282,7 @@ export async function dispatchGenerationEndedPush(
     return { sent: 0, reason: "user_active" };
   }
 
-  const isError = !!payload.error;
+  const isError = !!(payload.error || payload.errorMessage || payload.errorCode);
   if (isError && !prefs.events.generation_error) {
     return { sent: 0, reason: "event_disabled" };
   }

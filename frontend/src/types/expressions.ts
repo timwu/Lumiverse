@@ -54,4 +54,11 @@ export interface ExpressionChangedPayload {
   characterId: string
   label: string
   imageId: string
+  expressionGroup?: string
+}
+
+export interface MultiCharacterExpressionsChangedPayload {
+  chatId: string
+  characterId: string
+  expressions: Record<string, { label: string; imageId: string }>
 }

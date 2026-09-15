@@ -371,7 +371,10 @@ export async function maybeConsolidate(
        FROM chat_chunks cc
        LEFT JOIN memory_salience ms ON ms.chunk_id = cc.id
        WHERE cc.chat_id = ? AND cc.consolidation_id IS NULL
-       ORDER BY cc.created_at ASC
+       ORDER BY cc.message_range_start IS NULL ASC,
+                cc.message_range_start ASC,
+                cc.message_range_end ASC,
+                cc.id ASC
        LIMIT ?`,
     )
     .all(chatId, config.chunksPerConsolidation) as any[];
@@ -959,8 +962,10 @@ export async function consolidateBacklog(
   sidecarTimeoutMs?: number,
   samplingParameters?: Record<string, unknown>,
   extraScaffoldTags?: string[],
+  sidecarOptions?: ConsolidationSidecarOptions,
 ): Promise<number> {
   let created = 0;
+  if (sidecarOptions?.signal?.aborted) return created;
   while (await maybeConsolidate(
     userId,
     chatId,
@@ -970,8 +975,10 @@ export async function consolidateBacklog(
     sidecarTimeoutMs,
     samplingParameters,
     extraScaffoldTags,
+    sidecarOptions,
   )) {
     created++;
+    if (sidecarOptions?.signal?.aborted) break;
   }
   return created;
 }

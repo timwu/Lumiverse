@@ -56,6 +56,8 @@ function initConsolidationTestDb(): void {
     chat_id TEXT NOT NULL,
     content TEXT NOT NULL,
     created_at INTEGER NOT NULL,
+    message_range_start INTEGER,
+    message_range_end INTEGER,
     consolidation_id TEXT,
     entity_ids TEXT,
     emotional_tags TEXT
@@ -92,13 +94,17 @@ function seedChunks(chatId: string, count: number): void {
   const db = getDb();
   for (let i = 0; i < count; i++) {
     db.query(
-      `INSERT INTO chat_chunks (id, chat_id, content, created_at, consolidation_id, entity_ids, emotional_tags)
-       VALUES (?, ?, ?, ?, NULL, '[]', '[]')`,
+      `INSERT INTO chat_chunks (
+         id, chat_id, content, created_at, message_range_start, message_range_end,
+         consolidation_id, entity_ids, emotional_tags
+       ) VALUES (?, ?, ?, ?, ?, ?, NULL, '[]', '[]')`,
     ).run(
       `chunk-${i}`,
       chatId,
       `Elena opened the iron gate and walked into the courtyard ${i}. The lanterns were already lit along the wall.`,
       1_000 + i,
+      i,
+      i,
     );
   }
 }

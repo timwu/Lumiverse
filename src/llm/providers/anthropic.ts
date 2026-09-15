@@ -26,9 +26,9 @@ export class AnthropicProvider implements LlmProvider {
   private static readonly PROMPT_PLACEHOLDER = "Let's get started.";
   private static readonly CACHE_TTLS = new Set(["5m", "1h"]);
 
-  readonly name = "anthropic";
-  readonly displayName = "Anthropic";
-  readonly defaultUrl = "https://api.anthropic.com";
+  readonly name: string = "anthropic";
+  readonly displayName: string = "Anthropic";
+  readonly defaultUrl: string = "https://api.anthropic.com";
 
   readonly capabilities: ProviderCapabilities = {
     parameters: {
@@ -122,6 +122,19 @@ export class AnthropicProvider implements LlmProvider {
       headers["anthropic-beta"] = AnthropicProvider.INTERLEAVED_THINKING_BETA;
     }
     return headers;
+  }
+
+  /**
+   * Resolve the Messages request URL. Kept as a hook because Anthropic's
+   * Messages protocol is also exposed by cloud platforms (for example Vertex
+   * AI's publisher-model rawPredict endpoints) under a different path.
+   */
+  protected messagesUrl(
+    apiUrl: string,
+    _request: GenerationRequest,
+    _stream: boolean,
+  ): string {
+    return `${this.baseUrl(apiUrl)}/v1/messages`;
   }
 
   /**
@@ -243,7 +256,7 @@ export class AnthropicProvider implements LlmProvider {
     apiUrl: string,
     request: GenerationRequest,
   ): Promise<GenerationResponse> {
-    const url = `${this.baseUrl(apiUrl)}/v1/messages`;
+    const url = this.messagesUrl(apiUrl, request, false);
     const body = this.buildBody(request, false);
     const suppressThinking = this.shouldSuppressThinking(request);
 
@@ -317,7 +330,7 @@ export class AnthropicProvider implements LlmProvider {
     apiUrl: string,
     request: GenerationRequest,
   ): AsyncGenerator<StreamChunk, void, unknown> {
-    const url = `${this.baseUrl(apiUrl)}/v1/messages`;
+    const url = this.messagesUrl(apiUrl, request, true);
     const body = this.buildBody(request, true);
     const suppressThinking = this.shouldSuppressThinking(request);
 
@@ -834,7 +847,7 @@ export class AnthropicProvider implements LlmProvider {
     "prompt_caching",
   ]);
 
-  private buildBody(request: GenerationRequest, stream: boolean): any {
+  protected buildBody(request: GenerationRequest, stream: boolean): any {
     const params = request.parameters || {};
     const omitSampling = this.omitsSamplingParams(request.model);
     const systemBlocks: Array<Record<string, unknown>> = [];

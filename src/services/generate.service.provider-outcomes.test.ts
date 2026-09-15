@@ -6,10 +6,12 @@ import * as chats from "./chats.service";
 import * as connections from "./connections.service";
 import * as secrets from "./secrets.service";
 import * as pool from "./generation-pool.service";
+import * as presets from "./presets.service";
 import { startGeneration, stopAllGenerations, stopGenerationSweep } from "./generate.service";
 
 const userId = "provider-outcomes-test";
 const ended: any[] = [];
+const metricsReady: any[] = [];
 let fetchSpy: ReturnType<typeof spyOn> | undefined;
 let secretSpy: ReturnType<typeof spyOn>;
 let eventSpy: ReturnType<typeof spyOn>;
@@ -21,6 +23,7 @@ beforeAll(async () => {
   secretSpy = spyOn(secrets, "getSecret").mockResolvedValue("test-key");
   eventSpy = spyOn(eventBus, "emit").mockImplementation((type, payload) => {
     if (type === EventType.GENERATION_ENDED) ended.push(payload);
+    if (type === EventType.GENERATION_METRICS_READY) metricsReady.push(payload);
   });
 });
 afterEach(async () => { await Bun.sleep(5); fetchSpy?.mockRestore(); });
@@ -29,24 +32,36 @@ afterAll(() => {
   secretSpy.mockRestore(); eventSpy.mockRestore(); closeDatabase();
 });
 
-async function run(provider: string, body: object[], options: { responses?: boolean; nonStreaming?: boolean } = {}) {
+async function run(provider: string, body: object[], options: { responses?: boolean; nonStreaming?: boolean; presetName?: string } = {}) {
   const connection = await connections.createConnection(userId, {
     name: "Mock", provider, model: "test-model", api_url: "https://example.test",
   });
-  const chat = chats.createChat(userId, { character_id: null, name: "Test", metadata: { temporary: true, no_preset: true } });
+  const preset = options.presetName
+    ? presets.createPreset(userId, {
+        name: options.presetName,
+        provider,
+        prompt_order: [],
+      })
+    : null;
+  const chat = chats.createChat(userId, {
+    character_id: null,
+    name: "Test",
+    metadata: { temporary: true, ...(preset ? {} : { no_preset: true }) },
+  });
   chats.createMessage(chat.id, { is_user: true, name: "User", content: "Hello." }, userId);
   fetchSpy = spyOn(globalThis, "fetch").mockImplementation((async () => options.nonStreaming
     ? Response.json(body[0])
     : new Response(body.map(e => `data: ${JSON.stringify(e)}\n\n`).join(""))) as unknown as typeof fetch);
   const result = await startGeneration({
     userId, chat_id: chat.id, connection_id: connection.id, generation_type: "normal",
+    ...(preset ? { preset_id: preset.id } : {}),
     parameters: { ...(options.responses ? { use_responses_api: true } : {}), ...(options.nonStreaming ? { _streaming: false } : {}) },
   });
   const deadline = Date.now() + 3000;
   while (!ended.some(e => e.generationId === result.generationId) && Date.now() < deadline) await Bun.sleep(5);
   const event = ended.find(e => e.generationId === result.generationId);
   expect(event).toBeDefined();
-  return { event, generationId: result.generationId };
+  return { event, generationId: result.generationId, preset };
 }
 const chatThought = { choices: [{ delta: { reasoning_content: "A thought." } }] };
 const responseThought = { type: "response.reasoning_summary_text.delta", delta: "A thought." };
@@ -66,6 +81,11 @@ for (const fixture of cases) {
     const { event, generationId } = await run(fixture.provider, fixture.body, fixture);
     expect(event.finish_reason).toBe(fixture.reason);
     expect(event.error).toContain(fixture.error);
+    expect(event.errorMessage).toBe(event.error);
+    expect(event.connectionName).toBe("Mock");
+    expect(event.errorCode).toBe(
+      fixture.name === "Responses failure" ? "server_error" : fixture.reason,
+    );
     expect(pool.getPoolEntry(generationId)?.status).toBe("error");
     const saved = chats.getMessage(userId, event.messageId)!;
     expect(saved.extra.reasoning).toBe("A thought.");
@@ -111,6 +131,27 @@ for (const fixture of [
     expect(fetchSpy!.mock.calls).toHaveLength(1);
   });
 }
+
+test("generation metrics retain the preset used for the generated swipe", async () => {
+  const { generationId, preset } = await run(
+    "openai",
+    [{ choices: [{ delta: { content: "Hello." }, finish_reason: "stop" }] }],
+    { presetName: "Raven" },
+  );
+  const deadline = Date.now() + 3000;
+  while (!metricsReady.some((event) => event.generationId === generationId) && Date.now() < deadline) {
+    await Bun.sleep(5);
+  }
+  const metricsEvent = metricsReady.find((event) => event.generationId === generationId);
+  expect(metricsEvent?.generationMetrics).toMatchObject({
+    presetId: preset!.id,
+    presetName: "Raven",
+  });
+  expect(chats.getMessage(userId, metricsEvent.messageId)?.extra.generationMetrics).toMatchObject({
+    presetId: preset!.id,
+    presetName: "Raven",
+  });
+});
 for (const fixture of [
   { provider: "openai", body: [{ choices: [{ delta: { content: "Hello." }, finish_reason: "stop" }] }] },
   { provider: "google", body: [{ candidates: [{ content: { parts: [{ text: "Hello." }] }, finishReason: "STOP" }] }] },

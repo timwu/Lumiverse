@@ -456,6 +456,8 @@ export interface ImageGenParameterSchema {
   required?: boolean;
   options?: Array<{ id: string; label: string }>;
   group?: string;
+  /** Optional model-id prefixes that control when this parameter is shown. */
+  modelPrefixes?: string[];
   /** When set, the UI fetches models from GET /image-gen-connections/:id/models/:modelSubtype */
   modelSubtype?: string;
 }

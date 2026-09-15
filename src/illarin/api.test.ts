@@ -188,16 +188,18 @@ describe("illarin api client", () => {
       leaseExpiresAt: "2026-08-23T18:45:00Z",
       artifacts: [{ kind: "export", url: "https://cdn.illarin.xyz/delivery/1" }],
     };
-    const illarin = mock(() => Response.json({ deliveries: [delivery] }));
+    const notice = { assetId: "asset-2", name: "Quiet Toolbox", withheldAt: "2026-09-14T06:00:00Z" };
+    const illarin = mock(() => Response.json({ deliveries: [delivery], withheld: [notice] }));
 
     expect(await collectDeliveries(illarin.baseUrl, "ia1.live", ["prior-delivery"], { fetchImpl: illarin.testFetch }))
-      .toEqual([delivery]);
+      .toEqual({ deliveries: [delivery], withheld: [notice] });
     expect(illarin.requests[0].url.endsWith("/api/v1/deliveries/collect")).toBe(true);
     expect(illarin.requests[0].headers.get("authorization")).toBe("Bearer ia1.live");
     expect(JSON.parse(illarin.requests[0].body!)).toEqual({ acknowledge: ["prior-delivery"] });
 
     const empty = mock(() => new Response(null, { status: 204 }));
-    expect(await collectDeliveries(empty.baseUrl, "ia1.live", [], { fetchImpl: empty.testFetch })).toEqual([]);
+    expect(await collectDeliveries(empty.baseUrl, "ia1.live", [], { fetchImpl: empty.testFetch }))
+      .toEqual({ deliveries: [], withheld: [] });
     expect(JSON.parse(empty.requests[0].body!)).toEqual({ acknowledge: [] });
   });
 
@@ -207,7 +209,8 @@ describe("illarin api client", () => {
       return new Response(null, { status: 204 });
     };
 
-    expect(await collectDeliveries("http://127.0.0.1", "ia1.live", [], { fetchImpl: longPoll })).toEqual([]);
+    expect(await collectDeliveries("http://127.0.0.1", "ia1.live", [], { fetchImpl: longPoll }))
+      .toEqual({ deliveries: [], withheld: [] });
   });
 
   test("fetches signed delivery artifacts without forwarding a bearer token", async () => {
@@ -242,7 +245,7 @@ describe("illarin api client", () => {
       removed: [],
     }, { fetchImpl: illarin.testFetch });
 
-    expect(result).toEqual({ accepted: 1, removed: 0, ignored: 0 });
+    expect(result).toEqual({ accepted: 1, removed: 0, ignored: 0, withheld: [] });
     expect(illarin.requests[0].url.endsWith("/api/v1/library/sync")).toBe(true);
     expect(illarin.requests[0].headers.get("authorization")).toBe("Bearer ia1.live");
     await expect(syncLibrary(illarin.baseUrl, "ia1.live", {

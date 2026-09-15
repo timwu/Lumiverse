@@ -79,6 +79,26 @@ export async function refreshAccessToken(userId: string, options?: IllarinReques
   return refreshPromise;
 }
 
+export async function withAccessToken<T>(userId: string, call: (accessToken: string) => Promise<T>): Promise<T | null> {
+  const accessToken = await getValidAccessToken(userId);
+  if (!accessToken) return null;
+  try {
+    return await call(accessToken);
+  } catch (err) {
+    if (!(err instanceof IllarinUnauthorizedError)) throw err;
+  }
+
+  const refreshed = await refreshAccessToken(userId);
+  if (!refreshed) return null;
+  try {
+    return await call(refreshed);
+  } catch (err) {
+    if (!(err instanceof IllarinUnauthorizedError)) throw err;
+    await handleTerminalUnauthorized(userId, "unauthorized");
+    return null;
+  }
+}
+
 async function doRefresh(userId: string, options?: IllarinRequestOptions, force = false): Promise<string | null> {
   // Re-load under serialization: an earlier waiter may have already rotated.
   const record = await svc.getIllarinInstance(userId);

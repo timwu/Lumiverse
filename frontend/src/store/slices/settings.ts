@@ -732,7 +732,7 @@ export const createSettingsSlice: StateCreator<AppStore, [], [], SettingsSlice> 
   useCharacterBackground: false,
 
   thumbnailSettings: { smallSize: 300, largeSize: 700 },
-  pushNotificationPreferences: { enabled: true, events: { generation_ended: true, generation_error: false } },
+  pushNotificationPreferences: { enabled: true, events: { generation_ended: true, generation_error: true } },
   chatHeadsEnabled: true,
   chatHeadsSize: 48,
   chatHeadsDirection: 'column' as const,

@@ -109,6 +109,7 @@ Utility macros for text manipulation and flow control.
 | `{{trim}}...{{/trim}}` | — | Trims whitespace from the enclosed content |
 | `{{comment::...}}` | `{{note::...}}` | Comment — content is discarded, produces no output |
 | `{{// comment text}}` | — | Inline comment shorthand |
+| `{{#escape}}...{{/escape}}` | — | Emits the enclosed text literally — macros inside it are not evaluated |
 | `{{input}}` | — | The raw text of the last user message |
 | `{{reverse::text}}` | — | Reverses the given text |
 | `{{outlet::name}}` | — | Resolves the content exported by an active world-info entry outlet |

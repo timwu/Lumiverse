@@ -31,4 +31,8 @@ describe("isLargeUploadBodyLimitExemptPath", () => {
     expect(isLargeUploadBodyLimitExemptPath("/api/v1/characters/import-jobs/job-1/start")).toBe(false);
     expect(isLargeUploadBodyLimitExemptPath("/api/v1/characters/import-jobs")).toBe(false);
   });
+
+  test("allows SillyTavern ZIP backups through the global 10MB guard", () => {
+    expect(isLargeUploadBodyLimitExemptPath("/api/v1/st-migration/backup")).toBe(true);
+  });
 });

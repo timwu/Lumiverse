@@ -19,6 +19,7 @@ import { eventBus } from "../ws/bus";
 import { EventType } from "../ws/events";
 import { ifNoneMatchSatisfies } from "../utils/http-cache";
 import { getFrontendRuntimeCapabilities } from "../spindle/frontend-runtime-capabilities";
+import { reportLibraryToAll } from "../illarin/extensions";
 
 const app = new Hono();
 
@@ -328,6 +329,7 @@ app.delete("/:id", async (c) => {
 
     managerSvc.remove(ext.identifier);
     updateCheckSvc.clearCachedExtensionUpdate(ext.id);
+    if (ext.metadata?.illarin) void reportLibraryToAll();
 
     eventBus.emit(EventType.SPINDLE_EXTENSION_STATUS, {
       extensionId: ext.id,

@@ -104,6 +104,8 @@ function MetaPill({ index, timestamp, tokenCount, isHidden, isUser, generationMe
     || generationMetrics.tps != null
     || !!generationMetrics.model
     || !!generationMetrics.provider
+    || !!generationMetrics.presetName
+    || !!generationMetrics.presetId
   )
 
   const handleMouseEnter = useCallback(() => {
@@ -155,6 +157,14 @@ function MetaPill({ index, timestamp, tokenCount, isHidden, isUser, generationMe
             <span className={styles.tooltipRow}>
               <span className={styles.tooltipLabel}>{t('messageMeta.provider')}</span>
               <span className={styles.tooltipValue}>{generationMetrics!.provider}</span>
+            </span>
+          )}
+          {(generationMetrics!.presetName || generationMetrics!.presetId) && (
+            <span className={styles.tooltipRow}>
+              <span className={styles.tooltipLabel}>{t('messageMeta.preset')}</span>
+              <span className={styles.tooltipValue}>
+                {generationMetrics!.presetName || generationMetrics!.presetId}
+              </span>
             </span>
           )}
           {generationMetrics!.ttft != null && (

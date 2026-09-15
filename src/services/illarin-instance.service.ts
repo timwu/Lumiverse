@@ -214,6 +214,11 @@ export function updateLastDeclaration(userId: string, declarationJson: string): 
   getDb().query("UPDATE illarin_instance SET last_declaration_json = ? WHERE user_id = ?").run(declarationJson, userId);
 }
 
+export function canInstallExtensions(userId: string): boolean {
+  const row = getDb().query('SELECT role FROM "user" WHERE id = ?').get(userId) as { role: string | null } | null;
+  return row?.role === "owner" || row?.role === "admin";
+}
+
 /** Remove one user's Illarin credentials entirely. */
 export function deleteInstance(userId: string): void {
   getDb().query("DELETE FROM illarin_instance WHERE user_id = ?").run(userId);

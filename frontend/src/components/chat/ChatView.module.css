@@ -278,9 +278,40 @@
 }
 
 .cortexNoticeError {
+  padding-right: 38px;
   border-color: color-mix(in srgb, var(--lumiverse-danger, #ff6b6b) 34%, var(--lcs-glass-border, var(--lumiverse-border)));
   background: color-mix(in srgb, var(--lumiverse-danger, #ff6b6b) 10%, var(--lcs-glass-bg, var(--lumiverse-bg-elevated)));
   box-shadow: var(--lumiverse-shadow-sm), 0 0 0 1px color-mix(in srgb, var(--lumiverse-danger, #ff6b6b) 18%, transparent);
+}
+
+.cortexNoticeDismiss {
+  position: absolute;
+  top: 50%;
+  right: 8px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--lumiverse-text-muted);
+  cursor: pointer;
+  pointer-events: auto;
+  transform: translateY(-50%);
+}
+
+.cortexNoticeDismiss:hover,
+.cortexNoticeDismiss:focus-visible {
+  background: color-mix(in srgb, var(--lumiverse-danger, #ff6b6b) 18%, transparent);
+  color: var(--lumiverse-text);
+}
+
+.cortexNoticeDismiss:focus-visible {
+  outline: 1px solid var(--lumiverse-danger, #ff6b6b);
+  outline-offset: 1px;
 }
 
 .cortexNoticeStatus {

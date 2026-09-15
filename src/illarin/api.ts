@@ -21,6 +21,7 @@ import {
   type BrowserAuthorizationRequest,
   type BrowserAuthorizationResponse,
   type DeclarationUpdate,
+  type DeliveryWorkList,
   type DevicePollResult,
   type DeviceRequestResponse,
   type IllarinDelivery,
@@ -28,6 +29,7 @@ import {
   type LibrarySyncRequest,
   type LibrarySyncResponse,
   type TokenPair,
+  type WithheldNotice,
 } from "./types";
 
 export const DEFAULT_ILLARIN_BASE_URL = "https://illarin.xyz";
@@ -316,24 +318,34 @@ export async function collectDeliveries(
   accessToken: string,
   acknowledge: readonly string[],
   options?: IllarinRequestOptions,
-): Promise<IllarinDelivery[]> {
+): Promise<DeliveryWorkList> {
   if (!Array.isArray(acknowledge) || acknowledge.some((id) => typeof id !== "string" || id.length === 0)) {
     throw new RangeError("acknowledge must be an array of non-empty delivery ids");
   }
   const path = "/api/v1/deliveries/collect";
   const base = normalizeBaseUrl(baseUrl, Boolean(options?.fetchImpl));
-  const { status, data } = await requestJson<{ deliveries?: unknown }>(
+  const { status, data } = await requestJson<{ deliveries?: unknown; withheld?: unknown }>(
     base,
     "POST",
     path,
     { acknowledge: [...acknowledge] },
     { ...options, accessToken, timeoutMs: DELIVERY_COLLECT_TIMEOUT_MS },
   );
-  if (status === 204) return [];
+  if (status === 204) return { deliveries: [], withheld: [] };
   if (!data || !Array.isArray(data.deliveries) || !data.deliveries.every(isDelivery)) {
     throw new IllarinApiError(200, path, `Illarin ${path} returned a malformed delivery payload`);
   }
-  return data.deliveries;
+  return { deliveries: data.deliveries, withheld: withheldNotices(data.withheld) };
+}
+
+function withheldNotices(value: unknown): WithheldNotice[] {
+  if (!Array.isArray(value)) return [];
+  return value.filter((notice): notice is WithheldNotice =>
+    Boolean(notice) &&
+    typeof notice.assetId === "string" &&
+    typeof notice.name === "string" &&
+    typeof notice.withheldAt === "string"
+  );
 }
 
 function isDelivery(value: unknown): value is IllarinDelivery {
@@ -388,7 +400,13 @@ export async function syncLibrary(
   assertLibrarySyncRequest(report);
   const path = "/api/v1/library/sync";
   const base = normalizeBaseUrl(baseUrl, Boolean(options?.fetchImpl));
-  const { data } = await requestJson<LibrarySyncResponse>(base, "POST", path, report, { ...options, accessToken });
+  const { data } = await requestJson<Omit<LibrarySyncResponse, "withheld"> & { withheld?: unknown }>(
+    base,
+    "POST",
+    path,
+    report,
+    { ...options, accessToken },
+  );
   if (
     !data ||
     !Number.isInteger(data.accepted) ||
@@ -397,7 +415,7 @@ export async function syncLibrary(
   ) {
     throw new IllarinApiError(200, path, `Illarin ${path} returned a malformed sync response`);
   }
-  return data;
+  return { ...data, withheld: withheldNotices(data.withheld) };
 }
 
 function assertLibrarySyncRequest(report: LibrarySyncRequest): void {

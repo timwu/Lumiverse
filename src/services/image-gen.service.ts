@@ -81,6 +81,8 @@ interface ImageGenSettings {
   promptMode?: ImageGenPromptMode;
   customPrompt?: string;
   customNegativePrompt?: string;
+  /** Frontend-owned: last prompt entered in the Image Captioner modal. */
+  captionPrompt?: string;
   activePromptPresetId?: string | null;
   promptPresets?: ImageGenPromptPreset[];
   loraPresets?: LoraPreset[];
@@ -137,6 +139,7 @@ const DEFAULT_IMAGE_SETTINGS: ImageGenSettings = {
   promptMode: "scene",
   customPrompt: "",
   customNegativePrompt: "",
+  captionPrompt: "",
   activePromptPresetId: null,
   promptPresets: [],
   loraPresets: [],
@@ -2027,6 +2030,7 @@ const TRANSFERABLE_SETTING_TYPES: Record<string, "boolean" | "number" | "string"
   promptMode: "string",
   customPrompt: "string",
   customNegativePrompt: "string",
+  captionPrompt: "string",
   outputTarget: "string",
   previewPromptBeforeGenerate: "boolean",
   sceneChangeThreshold: "number",

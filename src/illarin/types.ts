@@ -41,6 +41,7 @@ export const KNOWN_EXPORT_TARGETS = [
   "theme_sillytavern",
   "theme_lumiverse",
   "pack_lumiverse",
+  "extension_spindle",
   "raw",
 ] as const;
 
@@ -158,6 +159,17 @@ export interface IllarinDelivery {
   artifacts: DeliveryArtifact[];
 }
 
+export interface WithheldNotice {
+  assetId: string;
+  name: string;
+  withheldAt: string;
+}
+
+export interface DeliveryWorkList {
+  deliveries: IllarinDelivery[];
+  withheld: WithheldNotice[];
+}
+
 export interface LibrarySyncEntry {
   assetId: string;
   contentGeneration?: number;
@@ -165,6 +177,7 @@ export interface LibrarySyncEntry {
 
 export interface LibrarySyncRequest {
   snapshot: boolean;
+  applicationVersion?: string;
   entries: LibrarySyncEntry[];
   removed: string[];
 }
@@ -173,4 +186,5 @@ export interface LibrarySyncResponse {
   accepted: number;
   removed: number;
   ignored: number;
+  withheld: WithheldNotice[];
 }

@@ -139,7 +139,8 @@ illarinRoutes.post("/link/browser", async (c) => {
     declaration = buildDeclaration({
       instanceName,
       applicationVersion: await readBackendVersion(),
-      scopes: ["asset:receive"],
+      scopes: ["asset:receive", "library:sync"],
+      installsExtensions: svc.canInstallExtensions(userId),
     });
   } catch (err) {
     return c.json({ error: err instanceof RangeError ? err.message : "invalid declaration" }, 400);
@@ -286,7 +287,8 @@ illarinRoutes.post("/link/device", async (c) => {
     declaration = buildDeclaration({
       instanceName,
       applicationVersion: await readBackendVersion(),
-      scopes: ["asset:receive"],
+      scopes: ["asset:receive", "library:sync"],
+      installsExtensions: svc.canInstallExtensions(userId),
     });
   } catch (err) {
     return c.json({ error: err instanceof RangeError ? err.message : "invalid declaration" }, 400);

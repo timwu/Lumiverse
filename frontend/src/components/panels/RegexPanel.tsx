@@ -257,11 +257,17 @@ export default function RegexPanel() {
   }, [regexScripts])
 
   const groupedScripts = useMemo(() => {
-    if (filteredScripts.length === 0) return null
     // Keep the uncategorized bucket under a folder-style header too, so it can
     // expose the same bulk actions as named folders.
     const groups: Array<{ folder: string; scripts: RegexScript[] }> = []
     const folderMap = new Map<string, RegexScript[]>()
+    // `folders` also contains names persisted by useFolders that do not have a
+    // script yet. Seed the map with them so creating a folder produces a
+    // visible empty target instead of appearing to do nothing.
+    for (const folder of folders) {
+      folderMap.set(folder, [])
+      groups.push({ folder, scripts: folderMap.get(folder)! })
+    }
     for (const s of filteredScripts) {
       const key = s.folder || ''
       if (!folderMap.has(key)) {
@@ -277,7 +283,7 @@ export default function RegexPanel() {
       return a.folder.localeCompare(b.folder)
     })
     return groups
-  }, [filteredScripts])
+  }, [filteredScripts, folders])
 
   const toggleFolder = useCallback((folder: string) => {
     setCollapsedFolders((prev) => {
@@ -829,7 +835,7 @@ export default function RegexPanel() {
       )}
 
       <div className={styles.scriptList}>
-        {filteredScripts.length === 0 ? (
+        {groupedScripts.length === 0 ? (
           <div className={styles.emptyState}>
             <p>{t('regexPanel.noScripts')}</p>
             <p>{t('regexPanel.clickPlus')}</p>
@@ -837,17 +843,20 @@ export default function RegexPanel() {
         ) : (
           <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
             <SortableContext items={renderedScriptIds} strategy={verticalListSortingStrategy}>
-              {groupedScripts ? (
-                groupedScripts.map((group) => {
-                  const folderKey = group.folder || UNCATEGORIZED_KEY
-                  const isCollapsed = collapsedFolders.has(folderKey)
-                  const folderLabel = group.folder || t('shared:uncategorized')
-                  const isNamedFolder = Boolean(group.folder)
-                  const presetVersions = getRemotePresetVersions(group.scripts, presets)
-                  const spindleVersions = getSpindleExtensionFolderVersions(group.scripts)
-                  return (
-                    <div key={folderKey}>
-                      <DroppableFolderHeader folderKey={folderKey} dropDisabled={!isCollapsed} onToggle={() => toggleFolder(folderKey)}>
+              {groupedScripts.map((group) => {
+                const folderKey = group.folder || UNCATEGORIZED_KEY
+                const isCollapsed = collapsedFolders.has(folderKey)
+                const folderLabel = group.folder || t('shared:uncategorized')
+                const isNamedFolder = Boolean(group.folder)
+                const presetVersions = getRemotePresetVersions(group.scripts, presets)
+                const spindleVersions = getSpindleExtensionFolderVersions(group.scripts)
+                return (
+                  <div key={folderKey}>
+                      <DroppableFolderHeader
+                        folderKey={folderKey}
+                        dropDisabled={!isCollapsed && group.scripts.length > 0}
+                        onToggle={() => toggleFolder(folderKey)}
+                      >
                         {bulkMode ? (
                           <button
                             type="button"
@@ -971,32 +980,9 @@ export default function RegexPanel() {
                             activePresetId={activeLoomPresetId}
                           />
                         ))}
-                    </div>
-                  )
-                })
-              ) : (
-                filteredScripts.map((script) => (
-                  <ScriptRow
-                    key={script.id}
-                    script={script}
-                    expanded={expandedId === script.id}
-                    onToggleExpand={() => setExpandedId(expandedId === script.id ? null : script.id)}
-                    selectionMode={bulkMode}
-                    selected={selectedIds.has(script.id)}
-                    onSelect={() => toggleScriptSelection(script.id)}
-                    onDelete={(e) => { e.stopPropagation(); setDeleteScriptTarget(script) }}
-                    onToggle={(disabled, e) => handleToggle(script.id, disabled, e)}
-                    onBindPreset={(e) => handleBindToPreset(script, e)}
-                    onUpdate={(updates) => updateRegexScript(script.id, updates)}
-                    onOpenModal={() => openModal('regexEditor', { scriptId: script.id })}
-                    targetBadge={targetBadge(script.target)}
-                    scopeIcon={scopeIcon(script.scope)}
-                    folders={folders}
-                    onCreateFolder={createFolder}
-                    activePresetId={activeLoomPresetId}
-                  />
-                ))
-              )}
+                  </div>
+                )
+              })}
             </SortableContext>
           </DndContext>
         )}
@@ -1042,10 +1028,10 @@ export default function RegexPanel() {
 }
 
 /** Folder header that doubles as a drop target, so a regex dragged onto a
- *  collapsed folder moves into it. The droppable is disabled while the folder is
- *  expanded — its visible rows are the precise drop targets then, and an active
- *  header droppable would otherwise "win" the collision when dragging toward the
- *  folder's top and bounce the row to the bottom. */
+ *  collapsed or empty folder moves into it. The droppable is disabled while a
+ *  non-empty folder is expanded — its visible rows are the precise drop targets
+ *  then, and an active header droppable would otherwise "win" the collision when
+ *  dragging toward the folder's top and bounce the row to the bottom. */
 function DroppableFolderHeader({
   folderKey,
   dropDisabled,

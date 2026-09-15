@@ -147,6 +147,9 @@ app.get("/status/:chatId", (c) => {
     completedMessageId: entry.completedMessageId,
     completedAt: entry.completedAt,
     error: entry.error,
+    errorCode: entry.errorCode,
+    errorMessage: entry.errorMessage,
+    connectionName: entry.connectionName,
   });
 });
 

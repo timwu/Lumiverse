@@ -294,6 +294,9 @@ export interface GenerationStatusResponse {
   completedMessageId?: string
   completedAt?: number
   error?: string
+  errorCode?: string
+  errorMessage?: string
+  connectionName?: string
 }
 
 export interface ActiveGenerationEntry {

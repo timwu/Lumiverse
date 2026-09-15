@@ -288,6 +288,38 @@ _resolve_bun() {
   return 1
 }
 
+# Install the standard Termux autobuild signing key when the current Termux
+# channel does not package glibc-repo (notably the Google Play channel).
+_install_termux_autobuild_key() {
+  local key_dir="${PREFIX}/etc/apt/trusted.gpg.d"
+  local key_file="${key_dir}/lumiverse-termux-autobuilds.gpg"
+  local key_url="https://raw.githubusercontent.com/termux/termux-packages/fc8cedb2e0a6ac296133631390823bf70d349281/packages/termux-keyring/termux-autobuilds.gpg"
+  local key_sha256="21c385d5a30107453bd60582d64e2f6e5f5ce11e340ac05e57f943f9c0235420"
+  local temp_key
+
+  if [[ -f "$key_file" ]] \
+     && printf '%s  %s\n' "$key_sha256" "$key_file" | sha256sum -c - &>/dev/null; then
+    return 0
+  fi
+
+  mkdir -p "$key_dir"
+  temp_key="$(mktemp "${TMPDIR:-${PREFIX}/tmp}/lumiverse-termux-key.XXXXXX")"
+  if ! curl --retry 3 -fsSL "$key_url" -o "$temp_key"; then
+    rm -f "$temp_key"
+    return 1
+  fi
+
+  if ! printf '%s  %s\n' "$key_sha256" "$temp_key" | sha256sum -c - &>/dev/null; then
+    err "Downloaded Termux repository signing key failed verification."
+    rm -f "$temp_key"
+    return 1
+  fi
+
+  install -m 600 "$temp_key" "$key_file"
+  rm -f "$temp_key"
+  ok "Installed verified Termux autobuild repository signing key"
+}
+
 # Install Termux prerequisites for running glibc-linked Bun binaries.
 # Bun is compiled against glibc, but Termux uses Android's bionic libc.
 # We need glibc-runner to bridge the gap, plus bun-termux for a proper
@@ -300,9 +332,41 @@ _install_bun_termux() {
     exit 1
   fi
 
+  local glibc_sources_dir="${PREFIX}/etc/apt/sources.list.d"
+  local glibc_source_file="${glibc_sources_dir}/glibc.list"
+  local glibc_repo_entry="deb https://packages-cf.termux.dev/apt/termux-glibc/ glibc stable"
+  local saved_glibc_source=""
+  local restore_glibc_source=false
+  local migrate_glibc_source=false
+
+  # Resume cleanly if an earlier setup attempt stopped while this source was
+  # temporarily disabled (for example, because the network dropped).
+  if [[ -f "$glibc_source_file" ]]; then
+    sed -i -E 's/^# Lumiverse setup: temporarily disabled: (deb[[:space:]].*termux-glibc.*)$/\1/' "$glibc_source_file"
+  fi
+
+  # Keep an existing glibc source out of the first package refresh. Older
+  # launchers wrote an invalid suite, while Google Play Termux installations
+  # may not have the official repository signing key linked yet. Re-enable the
+  # source after refreshing termux-keyring from the main repository, preserving
+  # any valid custom mirror the user already configured.
+  if [[ -f "$glibc_source_file" ]] \
+     && grep -Eq '^[[:space:]]*deb[[:space:]].*termux-glibc' "$glibc_source_file"; then
+    saved_glibc_source="$(cat "$glibc_source_file")"
+    restore_glibc_source=true
+    if grep -Eq 'packages(-cf)?\.termux\.dev/apt/termux-glibc/?[[:space:]]+stable[[:space:]]+main' "$glibc_source_file"; then
+      migrate_glibc_source=true
+      restore_glibc_source=false
+    fi
+    warn "Temporarily disabling the Termux glibc repository while refreshing its signing key..."
+    sed -i -E '/^[[:space:]]*deb[[:space:]].*termux-glibc/s/^/# Lumiverse setup: temporarily disabled: /' "$glibc_source_file"
+  fi
+
   # ── Step 1: Base packages ────────────────────────────────────────────────
   info "Installing base Termux prerequisites..."
   pkg update -y
+  info "Refreshing Termux repository signing keys..."
+  pkg reinstall -y termux-keyring
   pkg install -y git curl build-essential proot
 
   # ── Step 2: Set up the glibc repository ──────────────────────────────────
@@ -310,42 +374,40 @@ _install_bun_termux() {
   # termux-main repo. The glibc-repo package registers this repo source.
   info "Setting up glibc package repository..."
   local glibc_runner_installed=false
-  local glibc_sources_dir="${PREFIX}/etc/apt/sources.list.d"
 
   # Try installing glibc-repo (the repo enabler package)
   if pkg install -y glibc-repo 2>/dev/null; then
-    # Verify the glibc repo source was actually registered
-    if ls "${glibc_sources_dir}/"*glibc* &>/dev/null 2>&1; then
-      info "glibc repository registered, refreshing package lists..."
-    else
-      warn "glibc-repo installed but repo source not found — adding manually..."
-      mkdir -p "$glibc_sources_dir"
-      echo "deb https://packages-cf.termux.dev/apt/termux-glibc stable main" \
-        > "${glibc_sources_dir}/glibc.list"
-    fi
+    info "glibc repository registered, refreshing package lists..."
   else
     warn "glibc-repo package not available — adding glibc repository manually..."
-    mkdir -p "$glibc_sources_dir"
-    echo "deb https://packages-cf.termux.dev/apt/termux-glibc stable main" \
-      > "${glibc_sources_dir}/glibc.list"
+    if command -v apt-get &>/dev/null && ! _install_termux_autobuild_key; then
+      err "Could not install the verified signing key for the Termux glibc repository."
+      exit 1
+    fi
+  fi
+
+  # Restore a valid custom mirror, migrate only the known-broken legacy entry,
+  # or add the canonical source if glibc-repo did not create one.
+  mkdir -p "$glibc_sources_dir"
+  if [[ "$restore_glibc_source" == true ]]; then
+    printf '%s\n' "$saved_glibc_source" > "$glibc_source_file"
+  elif [[ "$migrate_glibc_source" == true ]] \
+       || ! grep -Eq '^[[:space:]]*deb[[:space:]].*termux-glibc' "$glibc_source_file" 2>/dev/null; then
+    echo "$glibc_repo_entry" > "$glibc_source_file"
   fi
 
   # Refresh package lists to pick up the glibc repo
-  pkg update -y 2>/dev/null || apt-get update -y 2>/dev/null || true
+  pkg update -y
 
   # ── Step 3: Install glibc-runner ─────────────────────────────────────────
   if pkg install -y glibc-runner 2>/dev/null; then
     glibc_runner_installed=true
     ok "glibc-runner installed via apt"
   else
-    warn "glibc-runner not found via apt — trying alternate mirror..."
-    # Some mirrors don't serve termux-glibc; try the primary mirror directly
-    mkdir -p "$glibc_sources_dir"
-    echo "deb https://packages.termux.dev/apt/termux-glibc stable main" \
-      > "${glibc_sources_dir}/glibc.list"
-    if apt-get update -y 2>/dev/null && pkg install -y glibc-runner 2>/dev/null; then
+    warn "glibc-runner not found — refreshing package lists and retrying..."
+    if pkg update -y 2>/dev/null && pkg install -y glibc-runner 2>/dev/null; then
       glibc_runner_installed=true
-      ok "glibc-runner installed via apt (alternate mirror)"
+      ok "glibc-runner installed after refreshing package lists"
     fi
   fi
 

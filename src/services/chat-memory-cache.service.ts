@@ -216,7 +216,10 @@ function getRecentFallbackChunks(
     .query(
       `SELECT id, content, message_ids FROM chat_chunks
        WHERE chat_id = ?
-       ORDER BY created_at DESC
+       ORDER BY message_range_start IS NULL ASC,
+                message_range_start DESC,
+                message_range_end DESC,
+                id DESC
        LIMIT ?`,
     )
     .all(chatId, fetchLimit) as Array<{ id: string; content: string; message_ids: string | null }>;

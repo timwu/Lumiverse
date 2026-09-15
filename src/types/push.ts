@@ -28,6 +28,9 @@ export interface PushPayload {
     url?: string;
     chatId?: string;
     characterName?: string;
+    connectionName?: string;
+    errorCode?: string;
+    errorMessage?: string;
   };
   icon?: string;
   image?: string;

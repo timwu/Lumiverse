@@ -1,7 +1,7 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useCallback, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { useNavigate, useParams } from 'react-router'
-import { ArrowUp, List, ListChecks, LoaderCircle, Pencil, UserRound } from 'lucide-react'
+import { ArrowUp, List, ListChecks, LoaderCircle, Pencil, UserRound, X } from 'lucide-react'
 import { useStore } from '@/store'
 import { toast } from '@/lib/toast'
 import { chatsApi, messagesApi } from '@/api/chats'
@@ -61,13 +61,13 @@ import { holdImagesForTransition } from '@/lib/imageDecodeCache'
 import { takeChatNavigationSnapshot } from '@/lib/chatNavigationSnapshot'
 import { hasEnabledFrontendExtension } from '@/lib/spindle/frontend-extension-availability'
 import { resolveChatContentWidthPx } from '@/lib/chatContentWidth'
-
-interface CortexNotice {
-  variant: 'processing' | 'error'
-  title: string
-  detail: string
-  percent?: number
-}
+import {
+  buildCortexNotice,
+  cortexErrorNoticeRemainingMs,
+  hideDismissedCortexError,
+  normalizeRebuildStatus,
+  type CortexRebuildStatus,
+} from './cortexNotice'
 
 interface SpindleNotice {
   variant: 'processing' | 'error'
@@ -101,116 +101,6 @@ function findExtensionChild(anchor: HTMLElement): Element | null {
   return null
 }
 
-interface CortexRebuildStatus {
-  chatId?: string
-  status: string
-  current?: number
-  total?: number
-  percent?: number
-  error?: string
-  source?: string
-}
-
-function formatChunkProgress(payload: CortexRebuildStatus, t: (key: string, opts?: Record<string, unknown>) => string): string {
-  const current = payload.current ?? 0
-  const total = payload.total ?? 0
-  return total > 0 ? t('chatView.cortexChunks', { current, total }) : ''
-}
-
-function formatIngestionDetail(status: CortexIngestionStatus, t: (key: string, opts?: Record<string, unknown>) => string): string {
-  const phaseDetail: Record<CortexIngestionStatus['phase'], string> = {
-    queued: t('chatView.cortexQueued'),
-    font: t('chatView.cortexFont'),
-    heuristics: t('chatView.cortexHeuristics'),
-    sidecar: t('chatView.cortexSidecar'),
-    persisting: t('chatView.cortexPersisting'),
-    complete: t('chatView.cortexComplete'),
-    error: formatCortexError(status.error, t, 'chatView.cortexProcessingFailed'),
-  }
-
-  return phaseDetail[status.phase] + (status.pendingJobs > 1 ? t('chatView.cortexJobsPending', { count: status.pendingJobs }) : '')
-}
-
-function formatCortexError(
-  error: string | undefined,
-  t: (key: string, opts?: Record<string, unknown>) => string,
-  fallbackKey: string,
-): string {
-  // Sidecar status codes are internal implementation details. They arrive via
-  // the progress socket rather than a user-facing error contract, so never
-  // render values such as "sidecar_failed" in the memory notice.
-  if (/^sidecar(?:[_\s-].*)?$/i.test(error?.trim() ?? '')) {
-    return t(fallbackKey)
-  }
-  return error || t(fallbackKey)
-}
-
-function formatRebuildDetail(payload: CortexRebuildStatus, t: (key: string, opts?: Record<string, unknown>) => string): string {
-  const action = payload.source === 'warmup'
-    ? t('chatView.cortexPreparingMemory')
-    : t('chatView.cortexRebuildingMemory')
-
-  return action + formatChunkProgress(payload, t)
-}
-
-function buildCortexNotice(
-  ingestionStatus: CortexIngestionStatus | null,
-  rebuildStatus: CortexRebuildStatus | null,
-  t: (key: string, opts?: Record<string, unknown>) => string,
-): CortexNotice | null {
-  if (rebuildStatus?.status === 'error') {
-    return {
-      variant: 'error',
-      title: t('chatView.memory'),
-      detail: formatCortexError(rebuildStatus.error, t, 'chatView.memoryRebuildFailed'),
-      percent: rebuildStatus.percent,
-    }
-  }
-
-  if (ingestionStatus?.status === 'error') {
-    return {
-      variant: 'error',
-      title: t('chatView.memory'),
-      detail: formatCortexError(ingestionStatus.error, t, 'chatView.backgroundMemoryFailed'),
-    }
-  }
-
-  const rebuildProcessing = rebuildStatus?.status === 'processing'
-  const ingestionProcessing = ingestionStatus?.status === 'processing'
-
-  if (rebuildProcessing && ingestionProcessing) {
-    return {
-      variant: 'processing',
-      title: t('chatView.memory'),
-      detail: t('chatView.cortexCombined', { chunks: formatChunkProgress(rebuildStatus, t) }),
-      percent: rebuildStatus.percent,
-    }
-  }
-
-  if (rebuildProcessing) {
-    return {
-      variant: 'processing',
-      title: t('chatView.memory'),
-      detail: formatRebuildDetail(rebuildStatus, t),
-      percent: rebuildStatus.percent,
-    }
-  }
-
-  if (ingestionProcessing) {
-    return {
-      variant: 'processing',
-      title: t('chatView.memory'),
-      detail: formatIngestionDetail(ingestionStatus, t),
-    }
-  }
-
-  return null
-}
-
-function normalizeRebuildStatus(payload: CortexRebuildStatus | null): CortexRebuildStatus | null {
-  if (!payload) return null
-  return payload.status === 'idle' || payload.status === 'complete' ? null : payload
-}
 
 function buildSpindleNotice(payload: SpindlePreGenerationActivityPayload, t: (key: string, opts?: Record<string, unknown>) => string): SpindleNotice {
   const phaseLabel: Record<SpindlePreGenerationActivityPayload['phase'], string> = {
@@ -245,6 +135,7 @@ export default function ChatView() {
   const spindleVisibleAtRef = useRef<number | null>(null)
   const [ingestionStatus, setIngestionStatus] = useState<CortexIngestionStatus | null>(null)
   const [rebuildStatus, setRebuildStatus] = useState<CortexRebuildStatus | null>(null)
+  const [dismissedCortexErrorKey, setDismissedCortexErrorKey] = useState<string | null>(null)
   const [spindleNotice, setSpindleNotice] = useState<SpindleNotice | null>(null)
   const [chatFindOpen, setChatFindOpen] = useState(false)
   const [chatFindFocusRequest, setChatFindFocusRequest] = useState(0)
@@ -525,6 +416,16 @@ export default function ChatView() {
   }, [chatId, completeNavigateHome])
 
   const cortexNotice = useMemo(() => buildCortexNotice(ingestionStatus, rebuildStatus, t), [ingestionStatus, rebuildStatus, t])
+  const visibleCortexNotice = hideDismissedCortexError(cortexNotice, dismissedCortexErrorKey)
+
+  useEffect(() => {
+    if (cortexNotice?.variant !== 'error' || !cortexNotice.errorKey) return
+    const errorKey = cortexNotice.errorKey
+    const timer = window.setTimeout(() => {
+      setDismissedCortexErrorKey(errorKey)
+    }, cortexErrorNoticeRemainingMs(cortexNotice))
+    return () => window.clearTimeout(timer)
+  }, [cortexNotice])
 
   useEffect(() => {
     if (!spindleNotice || spindleNotice.variant !== 'error') return
@@ -592,6 +493,7 @@ export default function ChatView() {
 
     setIngestionStatus(null)
     setRebuildStatus(null)
+    setDismissedCortexErrorKey(null)
     resetSpindleNotice()
 
     Promise.all([
@@ -603,6 +505,9 @@ export default function ChatView() {
       setRebuildStatus(normalizeRebuildStatus(rebuild))
     })
 
+    // This passive request may also queue ordinary LTCM embedding work. Do not
+    // synthesize a notice from its response: only actual Cortex progress events
+    // below represent heuristic or sidecar analysis.
     memoryCortexApi.warm(chatId).catch(() => {})
 
     const offIngestion = wsClient.on(EventType.CORTEX_INGESTION_PROGRESS, (payload: any) => {
@@ -827,6 +732,17 @@ export default function ChatView() {
         } else {
           useStore.getState().clearGroupChat()
           useStore.getState().clearGroupExpressions()
+        }
+
+        // Restore the visible sprite set for cards that represent multiple
+        // named characters. This is independent of Lumiverse group chats.
+        const savedMultiCharacterExprs = chat.metadata?.multi_character_expressions as
+          | Record<string, { label: string; imageId: string }>
+          | undefined
+        if (savedMultiCharacterExprs) {
+          useStore.getState().setMultiCharacterExpressions(savedMultiCharacterExprs)
+        } else {
+          useStore.getState().clearMultiCharacterExpressions()
         }
 
         // Restore active expression from chat metadata (async, fire-and-forget)
@@ -1269,7 +1185,7 @@ export default function ChatView() {
         )}
 
         <div className={styles.chatColumn} data-lumiverse-surface="chat-column">
-          {(spindleNotice || cortexNotice) && (
+          {(spindleNotice || visibleCortexNotice) && (
             <div className={styles.noticeDock} aria-live="polite" aria-atomic="true">
               {spindleNotice && (
                 <div className={clsx(styles.cortexNotice, styles.spindleNotice, spindleNotice.variant === 'error' && styles.cortexNoticeError)}>
@@ -1283,16 +1199,27 @@ export default function ChatView() {
                   </span>
                 </div>
               )}
-              {cortexNotice && (
-                <div className={clsx(styles.cortexNotice, cortexNotice.variant === 'error' && styles.cortexNoticeError)}>
+              {visibleCortexNotice && (
+                <div className={clsx(styles.cortexNotice, visibleCortexNotice.variant === 'error' && styles.cortexNoticeError)}>
                   <span className={styles.cortexNoticeStatus} aria-hidden="true" />
-                  <span className={styles.cortexNoticeTitle}>{cortexNotice.title}</span>
+                  <span className={styles.cortexNoticeTitle}>{visibleCortexNotice.title}</span>
                   <span className={styles.cortexNoticeSeparator} aria-hidden="true">•</span>
-                  <span className={styles.cortexNoticeDetail}>{cortexNotice.detail}</span>
-                  <span className={styles.cortexNoticePercent}>{typeof cortexNotice.percent === 'number' ? `${cortexNotice.percent}%` : ''}</span>
-                  {typeof cortexNotice.percent === 'number' && (
+                  <span className={styles.cortexNoticeDetail}>{visibleCortexNotice.detail}</span>
+                  <span className={styles.cortexNoticePercent}>{typeof visibleCortexNotice.percent === 'number' ? `${visibleCortexNotice.percent}%` : ''}</span>
+                  {visibleCortexNotice.variant === 'error' && visibleCortexNotice.errorKey && (
+                    <button
+                      type="button"
+                      className={styles.cortexNoticeDismiss}
+                      onClick={() => setDismissedCortexErrorKey(visibleCortexNotice.errorKey ?? null)}
+                      aria-label={t('chatView.dismissMemoryNotice')}
+                      title={t('chatView.dismissMemoryNotice')}
+                    >
+                      <X size={13} aria-hidden="true" />
+                    </button>
+                  )}
+                  {typeof visibleCortexNotice.percent === 'number' && (
                     <span className={styles.cortexNoticeBar} aria-hidden="true">
-                      <span className={styles.cortexNoticeFill} style={{ transform: `scaleX(${Math.max(0, Math.min(1, cortexNotice.percent / 100))})` }} />
+                      <span className={styles.cortexNoticeFill} style={{ transform: `scaleX(${Math.max(0, Math.min(1, visibleCortexNotice.percent / 100))})` }} />
                     </span>
                   )}
                 </div>

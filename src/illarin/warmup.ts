@@ -36,8 +36,6 @@ function requestedScopes(instance: IllarinInstance): IllarinScope[] {
 }
 
 async function warmOne(instance: IllarinInstance, currentVersion: string): Promise<void> {
-  if (instance.lastDeclaration?.applicationVersion === currentVersion) return;
-
   const accessToken = await getValidAccessToken(instance.userId);
   if (!accessToken) return; // Torn down during refresh; event already emitted.
 
@@ -46,7 +44,9 @@ async function warmOne(instance: IllarinInstance, currentVersion: string): Promi
     instanceName: instance.instanceName,
     applicationVersion: currentVersion,
     scopes: requestedScopes(instance),
+    installsExtensions: instance.scopes.includes("library:sync") && svc.canInstallExtensions(instance.userId),
   });
+  if (JSON.stringify(instance.lastDeclaration) === JSON.stringify(declaration)) return;
   const update = buildDeclarationUpdate(declaration);
   try {
     await updateInstanceDeclaration(instance.illarinUrl, accessToken, update);

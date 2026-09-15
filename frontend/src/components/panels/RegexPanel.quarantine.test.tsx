@@ -65,6 +65,12 @@ const evidenceReports: Array<{ id: string; payload: Record<string, unknown> }> =
 let reportEvidenceImpl: (id: string, payload: Record<string, unknown>) => Promise<unknown> = async () => ({})
 const successToasts: string[] = []
 const errorToasts: string[] = []
+let storedRegexFolders: string[] = []
+const putSetting = jest.fn(async (key: string, value: unknown) => {
+  if (key === 'regexScriptFolders' && Array.isArray(value)) {
+    storedRegexFolders = value as string[]
+  }
+})
 
 mock.module('@/api/regex', () => ({
   regexApi: {
@@ -78,8 +84,8 @@ mock.module('@/api/regex', () => ({
 }))
 mock.module('@/api/settings', () => ({
   settingsApi: {
-    get: async () => ({ value: [] }),
-    put: async () => ({}),
+    get: async (key: string) => ({ value: key === 'regexScriptFolders' ? storedRegexFolders : [] }),
+    put: putSetting,
   },
 }))
 mock.module('@/lib/toast', () => ({
@@ -211,6 +217,8 @@ afterEach(async () => {
   evidenceReports.length = 0
   successToasts.length = 0
   errorToasts.length = 0
+  storedRegexFolders = []
+  putSetting.mockClear()
   reportEvidenceImpl = async () => ({})
   loadRegexScripts.mockClear()
   updateRegexScript.mockClear()
@@ -278,5 +286,47 @@ describe('RegexPanel quarantine recovery', () => {
     expect(evidenceReports).toEqual([{ id: 'hung-script', payload: { quarantined: false } }])
     expect(errorToasts).toEqual(['Script is read-only'])
     expect(successToasts).toEqual([])
+  })
+})
+
+describe('RegexPanel folders', () => {
+  test('creating a folder with no scripts renders a blank folder target', async () => {
+    storeState = baseStoreState([])
+    const host = await mount(<RegexPanel />)
+
+    expect(host.textContent).toContain(panels.regexPanel.noScripts)
+
+    await click(host.querySelector<HTMLElement>('button[title="Add"]')!)
+    const newFolderButton = [...host.querySelectorAll<HTMLButtonElement>('button')]
+      .find((button) => button.textContent?.includes(panels.regexPanel.newFolder))
+    expect(newFolderButton).not.toBeUndefined()
+    await click(newFolderButton!)
+
+    const folderInput = host.querySelector<HTMLInputElement>(`input[placeholder="${panels.regexPanel.folderName}"]`)
+    expect(folderInput).not.toBeNull()
+    await act(async () => {
+      const setValue = Object.getOwnPropertyDescriptor(domWindow.HTMLInputElement.prototype, 'value')?.set
+      setValue?.call(folderInput, 'Post-processing')
+      folderInput!.dispatchEvent(new domWindow.Event('input', { bubbles: true }))
+      await Promise.resolve()
+    })
+    await act(async () => {
+      folderInput!.dispatchEvent(new domWindow.KeyboardEvent('keydown', { key: 'Enter', bubbles: true }))
+      await Promise.resolve()
+    })
+
+    expect(host.textContent).toContain('Post-processing')
+    expect(host.textContent).not.toContain(panels.regexPanel.noScripts)
+    expect(host.querySelector('[role="button"]')?.textContent).toContain('Post-processing0')
+  })
+
+  test('renders a previously persisted folder when the regex library is empty', async () => {
+    storedRegexFolders = ['Reusable targets']
+    storeState = baseStoreState([])
+
+    const host = await mount(<RegexPanel />)
+
+    expect(host.textContent).toContain('Reusable targets')
+    expect(host.textContent).not.toContain(panels.regexPanel.noScripts)
   })
 })

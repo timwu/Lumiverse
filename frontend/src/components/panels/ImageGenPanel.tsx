@@ -474,6 +474,12 @@ function ParamField({
   }
 }
 
+function parameterAppliesToModel(schema: ImageGenParameterSchema, model: string | undefined): boolean {
+  if (!schema.modelPrefixes?.length) return true
+  if (!model) return false
+  return schema.modelPrefixes.some((prefix) => model.startsWith(prefix))
+}
+
 export default function ImageGenPanel() {
   const { t } = useTranslation('panels')
   const imageGeneration = useStore((s) => s.imageGeneration)
@@ -555,6 +561,7 @@ export default function ImageGenPanel() {
   const capabilities = providerInfo?.capabilities
   const providerName = activeConnection?.provider || ''
   const isComfyUI = providerName === 'comfyui'
+  const isNovelAIV5 = providerName === 'novelai' && activeConnection?.model.startsWith('nai-diffusion-5')
 
   const loraDiscovery = useLoraDiscovery(
     activeConnection,
@@ -654,6 +661,7 @@ export default function ImageGenPanel() {
     const extraMap = new Map<string, Array<[string, ImageGenParameterSchema]>>()
 
     for (const [key, schema] of Object.entries(capabilities.parameters)) {
+      if (!parameterAppliesToModel(schema, activeConnection?.model)) continue
       const group = schema.group || 'main'
       if (KNOWN_GROUPS.has(group)) {
         groups[group].push([key, schema])
@@ -666,7 +674,7 @@ export default function ImageGenPanel() {
       extraGroups.push({ name, params })
     }
     return { ...groups, extra: extraGroups }
-  }, [capabilities])
+  }, [activeConnection?.model, capabilities])
 
   // Provider parameters are saved on the active connection so they do not leak
   // across profiles that happen to use the same parameter names.
@@ -1185,7 +1193,7 @@ export default function ImageGenPanel() {
   // Providers that accept image input: NovelAI/NanoGPT (style references) plus
   // the img2img providers, which reuse the same reference-image config surface.
   const supportsImg2ImgSource = providerName === 'swarmui' || providerName === 'comfyui' || providerName === 'google_gemini' || providerName === 'openrouter' || providerName === 'openai' || providerName === 'sdapi'
-  const supportsRefs = providerName === 'novelai' || providerName === 'nanogpt' || supportsImg2ImgSource
+  const supportsRefs = (providerName === 'novelai' && !isNovelAIV5) || providerName === 'nanogpt' || supportsImg2ImgSource
 
   const runGenerationCall = useCallback(async (input: {
     chatId: string
@@ -1886,6 +1894,17 @@ export default function ImageGenPanel() {
                   ))}
                 </EditorSection>
               ))}
+
+              {isNovelAIV5 && (
+                <EditorSection title={t('imageGenPanel.directorReferences')} Icon={IconBrush} defaultExpanded={false}>
+                  <div className={styles.workflowCard}>
+                    <div className={styles.workflowInfo}>
+                      <span className={styles.workflowTitle}>{t('imageGenPanel.novelaiV5ReferencesUnavailable')}</span>
+                      <span className={styles.workflowMeta}>{t('imageGenPanel.novelaiV5ReferencesUnavailableHint')}</span>
+                    </div>
+                  </div>
+                </EditorSection>
+              )}
 
               {/* Reference / source images — NovelAI & NanoGPT style references,
                   plus img2img init images for SwarmUI / ComfyUI / Gemini. */}

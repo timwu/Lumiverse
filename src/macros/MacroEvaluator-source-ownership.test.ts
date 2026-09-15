@@ -57,7 +57,10 @@ function makeEnv(): MacroEnv {
   };
 }
 
-function makeRegexScript(presetId: string | null): RegexScript {
+function makeRegexScript(
+  presetId: string | null,
+  ownerExtensionIdentifier: string | null = null,
+): RegexScript {
   return {
     id: `regex-${presetId ?? "unowned"}`,
     user_id: "user",
@@ -83,7 +86,7 @@ function makeRegexScript(presetId: string | null): RegexScript {
     pack_id: null,
     preset_id: presetId,
     character_id: null,
-    owner_extension_identifier: null,
+    owner_extension_identifier: ownerExtensionIdentifier,
     metadata: {},
     created_at: 0,
     updated_at: 0,
@@ -259,5 +262,18 @@ describe("prompt source ownership", () => {
     });
 
     expect(seen).toEqual(["{{calc::2 + 3}}"]);
+  });
+
+  test("keeps extension-owned preset regex macros interceptable", async () => {
+    const env = makeEnv();
+    await withInterceptor(() => "intercepted", async () => {
+      expect(await applyRegexScripts(
+        "token",
+        [makeRegexScript("preset", "extension.a")],
+        "ai_output",
+        undefined,
+        env,
+      )).toBe("intercepted");
+    });
   });
 });

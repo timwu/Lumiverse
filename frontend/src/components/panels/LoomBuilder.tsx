@@ -101,6 +101,7 @@ import { Button } from '@/components/shared/FormComponents'
 import { toast } from '@/lib/toast'
 import { useLongPress } from '@/hooks/useLongPress'
 import { markLoomRuntimeProfileContext } from '@/lib/loom/runtimeProfile'
+import { importPresetFiles } from '@/lib/loom/preset-import-batch'
 import SpindlePresetEditorTabContent from '@/components/spindle/SpindlePresetEditorTabContent'
 import SpindlePresetEditorToolbarItem from '@/components/spindle/SpindlePresetEditorToolbarItem'
 import { applyPresetEditorDraft, toPresetEditorDraft } from '@/lib/spindle/preset-editor-adapter'
@@ -2568,6 +2569,7 @@ useEffect(() => {
   }, [activePreset?.blocks])
   const fileInputRef = useRef<HTMLInputElement>(null)
   const importTypeRef = useRef<string>('json')
+  const presetImportInProgressRef = useRef(false)
   const lastCollapsedPresetRef = useRef<string | null>(null)
   const scrollAreaRef = useRef<HTMLDivElement>(null)
   const scrollTopRef = useRef(0)
@@ -2962,21 +2964,35 @@ useEffect(() => {
   }, [])
 
   const handleFileSelect = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0]
-    if (!file) return
-    try {
-      const text = await file.text()
-      const json = JSON.parse(text)
-      if (importTypeRef.current === 'st') {
-        await importFromST(json, file.name)
-      } else {
-        await importFromFile(json, file.name)
-      }
-    } catch (err) {
-      console.error('[LoomBuilder] Import failed:', err)
-    }
+    // Snapshot before resetting: clearing a file input also empties its live
+    // FileList in Chromium.
+    const files = Array.from(e.target.files ?? [])
     e.target.value = ''
-  }, [importFromFile, importFromST])
+    if (files.length === 0 || presetImportInProgressRef.current) return
+
+    const importType = importTypeRef.current
+    presetImportInProgressRef.current = true
+    try {
+      const result = await importPresetFiles(
+        files,
+        importType === 'st' ? importFromST : importFromFile,
+        {
+          invalidJson: lb('toast.invalidPresetJson'),
+          importFailed: lb('toast.presetImportFailed'),
+        },
+      )
+
+      if (files.length > 1 && result.imported > 0) {
+        toast.success(lb('toast.presetsImported', { count: result.imported }))
+      }
+      if (result.errors.length > 0) {
+        console.error('[LoomBuilder] Preset import failures:', result.errors)
+        toast.error(lb('toast.presetImportErrors', { count: result.errors.length }))
+      }
+    } finally {
+      presetImportInProgressRef.current = false
+    }
+  }, [importFromFile, importFromST, lb])
 
   const presetEditorToolbar = presetEditorToolbarItems.some((item) => item.visible) ? (
     <div className={s.extensionToolbar}>
@@ -3578,7 +3594,7 @@ useEffect(() => {
       </div>
 
       {/* Hidden file input for import */}
-      <input ref={fileInputRef} type="file" accept=".json" style={{ display: 'none' }} onChange={handleFileSelect} />
+      <input ref={fileInputRef} type="file" accept=".json" multiple style={{ display: 'none' }} onChange={handleFileSelect} />
 
       {/* Confirm legacy export */}
         <ConfirmationModal

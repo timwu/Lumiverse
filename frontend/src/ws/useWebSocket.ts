@@ -323,7 +323,7 @@ function fetchLatestMessages(chatId: string) {
   return messagesApi.list(chatId, { limit: pageSize, tail: true })
 }
 
-// Deferred generation metrics (tokenCount / TTFT / TPS / model / provider) are
+// Deferred generation metrics (tokenCount / TTFT / TPS / model / provider / preset) are
 // persisted *after* GENERATION_ENDED and pushed via GENERATION_METRICS_READY,
 // which races that event's reconciliation re-fetch (the fetch can read the row
 // before the metrics land). Buffer the last few keyed by message id so the
@@ -1223,7 +1223,7 @@ export function useWebSocket() {
         }
       }),
 
-      // Deferred metrics (tokenCount / TTFT / TPS / model / provider) arrive after
+      // Deferred metrics (tokenCount / TTFT / TPS / model / provider / preset) arrive after
       // GENERATION_ENDED — and may land before or after its reconciliation
       // re-fetch. Apply live, and buffer so the reconciliation can re-apply if its
       // setMessages won the race and wiped this patch (see GENERATION_ENDED).
@@ -1529,6 +1529,7 @@ export function useWebSocket() {
           payload.operation,
           payload.name ?? null
         )
+        if (payload.operation === 'installed') syncExtensions(true)
         if (payload.operation === 'disabled' && payload.extensionId) {
           const state = useStore.getState()
           state.setExtensionUpdates(
@@ -1854,6 +1855,16 @@ export function useWebSocket() {
           if (state.isGroupChat && payload.characterId) {
             state.setGroupExpression(payload.characterId, payload.label, payload.imageId)
           }
+        }
+      }),
+      wsClient.on(EventType.MULTI_CHARACTER_EXPRESSIONS_CHANGED, (payload: {
+        chatId: string
+        characterId: string
+        expressions: Record<string, { label: string; imageId: string }>
+      }) => {
+        const state = store.getState()
+        if (payload.chatId === state.activeChatId && payload.characterId === state.activeCharacterId) {
+          state.setMultiCharacterExpressions(payload.expressions)
         }
       }),
       // LumiHub remote install notifications

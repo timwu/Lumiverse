@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import {
   DEFAULT_APPLICATION_NAME,
+  EXTENSION_INSTALL_CAPABILITY,
   ILLARIN_ACCEPTED_TARGETS,
   ILLARIN_CAPABILITIES,
   assertDeclarationWireLimits,
@@ -40,7 +41,14 @@ describe("buildDeclaration", () => {
       "preset_sillytavern",
       "theme_lumiverse",
       "pack_lumiverse",
+      "extension_spindle",
     ]);
+  });
+
+  test("declares extension installs only for an installation that can install them", () => {
+    expect(buildDeclaration(VALID_INPUT).capabilities).not.toContain(EXTENSION_INSTALL_CAPABILITY);
+    expect(buildDeclaration({ ...VALID_INPUT, installsExtensions: true }).capabilities)
+      .toContain("chat.lumiverse:extension-install");
   });
 
   test("never declares SillyTavern themes — Lumiverse does not accept them", () => {

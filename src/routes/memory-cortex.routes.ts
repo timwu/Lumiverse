@@ -369,7 +369,7 @@ function launchTrackedCortexRebuild(
           ? { action: "skip", reason: "aborted_before_start" }
           : { action: "run" }
       ),
-      run: () => memoryCortex.rebuildCortex(
+      run: (laneSignal) => memoryCortex.rebuildCortex(
         userId,
         chatId,
         characterNames,
@@ -390,7 +390,11 @@ function launchTrackedCortexRebuild(
           }, userId);
         },
         descriptionAliases,
-        { resumable: source === "warmup", warmupSignature: snapshot.rebuildSignature, signal: abort.signal },
+        {
+          resumable: source === "warmup",
+          warmupSignature: snapshot.rebuildSignature,
+          signal: AbortSignal.any([abort.signal, laneSignal]),
+        },
       ),
     }).then((scheduled) => {
       if (scheduled.status !== "completed" || !scheduled.value) return;
@@ -415,6 +419,7 @@ function launchTrackedCortexRebuild(
       eventBus.emit(EventType.CORTEX_REBUILD_PROGRESS, {
         chatId,
         status: "error",
+        updatedAt: Date.now(),
         ...(source ? { source } : {}),
         error: err?.message || (source === "warmup" ? "Warmup failed" : "Rebuild failed"),
       }, userId);
@@ -1945,7 +1950,11 @@ function enrichConsolidationsWithMessageReferences(
        JOIN json_each(leaf.source_chunk_ids)
        JOIN chat_chunks cc ON cc.id = json_each.value AND cc.chat_id = ?
        WHERE leaf.chat_id = ?
-       ORDER BY source_tree.root_id, cc.created_at ASC`,
+       ORDER BY source_tree.root_id,
+                cc.message_range_start IS NULL ASC,
+                cc.message_range_start ASC,
+                cc.message_range_end ASC,
+                cc.id ASC`,
     ).all(chatId, ...ids, chatId, chatId, chatId) as Array<{ root_id: string; message_ids: string | null }>;
 
     for (const row of rows) {
@@ -1986,7 +1995,10 @@ app.get("/chats/:chatId/chunks", (c) => {
             cc.message_ids, cc.created_at, cc.updated_at
      FROM chat_chunks cc
      WHERE cc.chat_id = ?
-     ORDER BY cc.created_at DESC
+     ORDER BY cc.message_range_start IS NULL ASC,
+              cc.message_range_start DESC,
+              cc.message_range_end DESC,
+              cc.id DESC
      LIMIT ? OFFSET ?`,
   ).all(chatId, limit, offset);
 

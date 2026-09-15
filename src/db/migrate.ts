@@ -129,6 +129,7 @@ const BASELINE_MIGRATIONS: readonly string[] = [
   "111_generation_outbox_connection_id.sql",
   "112_weaver_session_taste.sql",
   "113_better_auth_1_7_accounts.sql",
+  "114_cleanup_stale_message_breakdowns.sql",
 ];
 
 const BASELINE_SET = new Set(BASELINE_MIGRATIONS);

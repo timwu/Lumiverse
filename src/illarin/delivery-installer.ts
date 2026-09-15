@@ -2,6 +2,7 @@
 
 import { strFromU8, unzipSync } from "fflate";
 import { fetchDeliveryArtifact } from "./api";
+import { installExtensionDelivery } from "./extensions";
 import type { IllarinDelivery } from "./types";
 import {
   installCharacter,
@@ -19,6 +20,7 @@ const MAX_PRESET_COVER_BYTES = 50 * 1024 * 1024;
 const MAX_THEME_BYTES = 200 * 1024 * 1024;
 const MAX_THEME_ENTRIES = 500;
 const MAX_THEME_EXPANDED_BYTES = 250 * 1024 * 1024;
+const MAX_EXTENSION_BYTES = 32 * 1024 * 1024;
 
 const PRESET_COVER_EXTENSIONS: Readonly<Record<string, string>> = {
   "image/apng": "apng",
@@ -208,6 +210,11 @@ export async function installIllarinDelivery(userId: string, delivery: IllarinDe
         themeData,
       });
       requireSuccess(result, delivery);
+      return;
+    }
+    case "extension": {
+      const response = await fetchDeliveryArtifact(exportUrl(delivery), { maxBytes: MAX_EXTENSION_BYTES });
+      await installExtensionDelivery(userId, delivery, new Uint8Array(await response.arrayBuffer()));
       return;
     }
     case "pack": {

@@ -481,5 +481,20 @@ export function generateThemeVariables(
     }
   }
 
+  // ── Semantic material aliases ──
+  // Keep the newer component-facing material vocabulary tied to the canonical
+  // low-level ladder after all mode and base-color overrides have resolved.
+  // These are emitted as concrete runtime values so public theme consumers
+  // (including Spindle's variable catalog) can reason about them directly.
+  vars['--lumiverse-surface'] = vars['--lumiverse-bg']
+  vars['--lumiverse-surface-raised'] = vars['--lumiverse-bg-elevated']
+  vars['--lumiverse-surface-hover'] = vars['--lumiverse-bg-hover']
+  vars['--lumiverse-surface-muted'] = vars['--lumiverse-fill-subtle']
+  vars['--lumiverse-input-bg'] = vars['--lumiverse-fill']
+  vars['--lumiverse-border-subtle'] = vars['--lumiverse-border-light']
+  vars['--lumiverse-primary-soft'] = vars['--lumiverse-primary-015']
+  vars['--lumiverse-text-primary'] = vars['--lumiverse-text']
+  vars['--lumiverse-text-secondary'] = vars['--lumiverse-text-muted']
+
   return vars
 }

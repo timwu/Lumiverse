@@ -23,6 +23,7 @@ function dependencies(overrides: Partial<DeliveryCycleDependencies> = {}) {
     recorded: [] as string[],
     queued: [] as string[],
     collectedWith: [] as string[][],
+    withheld: [] as string[],
   };
   const deps: DeliveryCycleDependencies = {
     getInstance: async () => ({
@@ -43,7 +44,10 @@ function dependencies(overrides: Partial<DeliveryCycleDependencies> = {}) {
     refreshAccessToken: async () => "refreshed",
     collect: async (_base, _token, acknowledge) => {
       calls.collectedWith.push([...acknowledge]);
-      return [DELIVERY];
+      return { deliveries: [DELIVERY], withheld: [] };
+    },
+    recordWithheld: async (_user, notices) => {
+      calls.withheld.push(...notices.map((notice) => notice.assetId));
     },
     pendingAcknowledgements: () => ["delivery-before"],
     markAcknowledged: (_user, _instance, ids) => calls.acknowledged.push([...ids]),
@@ -84,13 +88,25 @@ describe("Illarin delivery pickup", () => {
       collect: async () => {
         calls++;
         if (calls === 1) throw new IllarinUnauthorizedError(401, "/api/v1/deliveries/collect");
-        return [];
+        return { deliveries: [], withheld: [] };
       },
     });
 
     const result = await runDeliveryCycle("user-1", harness.deps);
     expect(result.status).toBe("continue");
     expect(calls).toBe(2);
+  });
+
+  test("records withheld notices that arrive with a delivery wait", async () => {
+    const harness = dependencies({
+      collect: async () => ({
+        deliveries: [],
+        withheld: [{ assetId: "asset-9", name: "Quiet Toolbox", withheldAt: "2026-09-14T06:00:00Z" }],
+      }),
+    });
+    await runDeliveryCycle("user-1", harness.deps);
+
+    expect(harness.calls.withheld).toEqual(["asset-9"]);
   });
 
   test("does not acknowledge a delivery whose installation failed", async () => {

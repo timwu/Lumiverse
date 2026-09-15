@@ -91,7 +91,7 @@ import {
 } from "./summarization-prompts.service";
 import {
   detectExpression,
-  detectMultiCharacterExpression,
+  detectMultiCharacterExpressions,
   getExpressionDetectionSettings,
   resolveDetectedExpressionLabel,
 } from "./expression-detection.service";
@@ -488,6 +488,8 @@ class GenerationCancelledByExtensionError extends Error {
 interface PromptPipelineResult {
   messages: LlmMessage[];
   parameters: GenerationParameters;
+  /** Preset selected by profile/request resolution for this generation. */
+  resolvedPreset?: { id: string; name: string };
   breakdown?: AssemblyBreakdownEntry[];
   /** Snapshot of chat history messages taken before interceptors/post-processing,
    *  used as the shared tokenization source for both dry-run and generation breakdowns. */
@@ -558,6 +560,44 @@ function errorMessage(err: unknown): string {
   } catch {
     return "Unknown error";
   }
+}
+
+/**
+ * Preserve a stable, machine-readable code alongside the human-facing error.
+ * Provider failures normally expose their upstream code; local/setup failures
+ * use a generic code so every terminal error notification has one.
+ */
+function generationErrorCode(err: unknown): string {
+  if (typeof err === "object" && err !== null && "code" in err) {
+    const code = (err as { code?: unknown }).code;
+    if (typeof code === "string" && code.trim()) {
+      return clampErrorMessage(code.trim()).slice(0, 120);
+    }
+    if (typeof code === "number" && Number.isFinite(code)) return String(code);
+  }
+  if (err instanceof ProviderRequestError && err.status) {
+    return `http_${err.status}`;
+  }
+  return "generation_failed";
+}
+
+function generationFailurePayload(
+  err: unknown,
+  message: string,
+  connectionName?: string,
+): {
+  error: string;
+  errorCode: string;
+  errorMessage: string;
+  connectionName?: string;
+} {
+  const name = connectionName?.trim();
+  return {
+    error: message,
+    errorCode: generationErrorCode(err),
+    errorMessage: message,
+    ...(name ? { connectionName: name } : {}),
+  };
 }
 
 /**
@@ -1087,6 +1127,7 @@ async function runPromptPipeline(opts: {
     | undefined;
   let macroEnv: import("../macros/types").MacroEnv | undefined;
   let trimIncompleteWords = false;
+  let resolvedPreset: { id: string; name: string } | undefined;
 
   let deliberationHandledByMacro = false;
 
@@ -1164,6 +1205,7 @@ async function runPromptPipeline(opts: {
     deliberationHandledByMacro = !!assemblyResult.deliberationHandledByMacro;
     macroEnv = assemblyResult.macroEnv;
     trimIncompleteWords = assemblyResult.trimIncompleteWords === true;
+    resolvedPreset = assemblyResult.resolvedPreset;
   }
 
   // Snapshot chat history messages BEFORE interceptors/post-processing can
@@ -1411,6 +1453,7 @@ async function runPromptPipeline(opts: {
   return {
     messages,
     parameters,
+    resolvedPreset,
     breakdown,
     chatHistoryMessages,
     assistantPrefill,
@@ -1894,6 +1937,7 @@ export async function startGeneration(
       characterName,
       characterId: targetCharId,
       model: connection.model,
+      connectionName: connection.name,
       targetMessageId: lifecycle.targetMessageId,
       targetSwipeId,
     });
@@ -2717,15 +2761,13 @@ export async function startGeneration(
         }
 
         // Use the preset assembly actually selected, including profile overrides.
-        const presetId = typeof pipeline.macroEnv?.extra.presetId === "string"
-          ? pipeline.macroEnv.extra.presetId
-          : input.messages ? input.preset_id || connection.preset_id : undefined;
+        const presetId = pipeline.resolvedPreset?.id
+          ?? (input.messages ? input.preset_id || connection.preset_id : undefined);
         if (presetId) {
-          const preset = presetsSvc.getPreset(input.userId, presetId);
-          if (preset) {
-            lifecycle.presetName = preset.name;
-            lifecycle.presetId = presetId;
-          }
+          const presetName = pipeline.resolvedPreset?.name
+            ?? presetsSvc.getPreset(input.userId, presetId)?.name;
+          lifecycle.presetId = presetId;
+          if (presetName) lifecycle.presetName = presetName;
         }
 
         // Final abort checkpoint between assembly completion and runGeneration
@@ -2802,13 +2844,14 @@ export async function startGeneration(
         abortChatBackground(input.userId, input.chat_id);
 
         const msg = errorMessage(err);
-        pool.errorPool(generationId, msg);
+        const failure = generationFailurePayload(err, msg, lifecycle.connectionName);
+        pool.errorPool(generationId, msg, failure);
         eventBus.emit(
           EventType.GENERATION_ENDED,
           {
             generationId,
             chatId: input.chat_id,
-            error: msg,
+            ...failure,
             generationType: lifecycle.generationType,
           },
           input.userId,
@@ -3681,7 +3724,9 @@ async function runGeneration(
         throw new ProviderRequestError({
           provider: provider.displayName,
           operation: "generation",
-          code: finishReason,
+          code: stopDetails?.type === "failed"
+            ? stopDetails.category || finishReason
+            : finishReason,
           detail: stopError,
           retryable: false,
         });
@@ -4063,6 +4108,8 @@ async function runGeneration(
               wasStreaming: boolean;
               model?: string;
               provider?: string;
+              presetId?: string;
+              presetName?: string;
             }
           | undefined;
         if (finalPoolEntry) {
@@ -4100,6 +4147,10 @@ async function runGeneration(
             ...(lifecycle.model ? { model: lifecycle.model } : {}),
             ...(lifecycle.providerName
               ? { provider: lifecycle.providerName }
+              : {}),
+            ...(lifecycle.presetId ? { presetId: lifecycle.presetId } : {}),
+            ...(lifecycle.presetName
+              ? { presetName: lifecycle.presetName }
               : {}),
           };
         }
@@ -4248,6 +4299,7 @@ async function runGeneration(
         apiKey,
         connectionName: lifecycle.connectionName,
       });
+      const failure = generationFailurePayload(err, msg, lifecycle.connectionName);
       abortChatBackground(userId, chatId);
       // Socket drops, provider 5xx mid-stream, etc. — persist whatever was
       // already streamed so the user keeps the visible content rather than
@@ -4267,7 +4319,7 @@ async function runGeneration(
         /* best-effort; never let save failure shadow the original error */
       }
       flushPendingStreamSegments();
-      pool.errorPool(generationId, msg);
+      pool.errorPool(generationId, msg, failure);
       eventBus.emit(
         EventType.GENERATION_ENDED,
         {
@@ -4275,7 +4327,7 @@ async function runGeneration(
           chatId,
           messageId: savedMessageId,
           content: savedContent,
-          error: msg,
+          ...failure,
           ...stopMetadata(),
           usage: streamUsage,
           generationType: lifecycle.generationType,
@@ -4309,8 +4361,8 @@ async function fireExpressionDetection(
 
   // ── Multi-character expression groups ──────────────────────────────────────
   // Cards with expression_groups (e.g., multi-character RisuAI imports) use a
-  // two-stage pipeline: identify the focus character, then detect expression
-  // within that character's label set.
+  // two-stage pipeline: identify every visible character, then detect each
+  // expression within that character's own label set.
   const expressionGroups = getExpressionGroups(userId, characterId);
   if (expressionGroups && Object.keys(expressionGroups).length > 0) {
     const detectionSettings = getExpressionDetectionSettings(userId);
@@ -4324,7 +4376,7 @@ async function fireExpressionDetection(
         content: m.content,
       }));
 
-    const result = await detectMultiCharacterExpression(
+    const results = await detectMultiCharacterExpressions(
       {
         userId,
         chatId,
@@ -4337,16 +4389,8 @@ async function fireExpressionDetection(
       rawGenerate,
     );
 
-    if (result) {
-      emitExpressionChanged(
-        userId,
-        chatId,
-        chat,
-        characterId,
-        result.expression,
-        result.imageId,
-        result.characterGroup,
-      );
+    if (results !== null) {
+      emitMultiCharacterExpressionsChanged(userId, chatId, characterId, results);
     }
     return;
   }
@@ -4410,6 +4454,49 @@ async function fireExpressionDetection(
       characterId,
       detectedLabel,
       expressionConfig.mappings[detectedLabel],
+    );
+  }
+}
+
+function emitMultiCharacterExpressionsChanged(
+  userId: string,
+  chatId: string,
+  characterId: string,
+  results: Array<{ characterGroup: string; expression: string; imageId: string }>,
+): void {
+  const expressions = Object.fromEntries(results.map((result) => [
+    result.characterGroup,
+    { label: result.expression, imageId: result.imageId },
+  ]));
+  const primary = results[0];
+
+  // This is a snapshot of the characters visible in the latest response, not
+  // an accumulating history. Replacing it removes sprites that left the scene.
+  chatsSvc.mergeChatMetadata(userId, chatId, {
+    multi_character_expressions: expressions,
+    active_expression: primary?.expression ?? null,
+    active_expression_group: primary?.characterGroup ?? null,
+  });
+
+  eventBus.emit(
+    EventType.MULTI_CHARACTER_EXPRESSIONS_CHANGED,
+    { chatId, characterId, expressions },
+    userId,
+  );
+
+  // Keep the original single-expression signal for older clients and
+  // extensions. New clients use the batch event above to render every result.
+  if (primary) {
+    eventBus.emit(
+      EventType.EXPRESSION_CHANGED,
+      {
+        chatId,
+        characterId,
+        label: primary.expression,
+        imageId: primary.imageId,
+        expressionGroup: primary.characterGroup,
+      },
+      userId,
     );
   }
 }

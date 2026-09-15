@@ -1,6 +1,12 @@
 export { evaluate } from "./MacroEvaluator";
 export { buildEnv, cloneEnv, mergeDynamicMacros, resolveGroupCharacterNames, resolvePersonaPronouns, withPromptBlockContext, type BuildEnvContext } from "./MacroEnv";
 export { registry } from "./MacroRegistry";
+export {
+  LITERAL_BRACE_CLOSE,
+  LITERAL_BRACE_OPEN,
+  restoreLiteralBraces,
+  shieldLiteralBraces,
+} from "./literal-braces";
 export type {
   MacroEnv,
   MacroHandler,

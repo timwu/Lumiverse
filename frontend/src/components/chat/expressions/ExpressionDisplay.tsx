@@ -9,7 +9,7 @@ import { wsClient } from '@/ws/client'
 import { EventType } from '@/types/ws-events'
 import { expressionsApi } from '@/api/expressions'
 import { EXPRESSION_SIZE_PRESETS } from '@/types/expressions'
-import type { ExpressionConfig, ExpressionDisplaySize } from '@/types/expressions'
+import type { ExpressionConfig, ExpressionDisplaySize, ExpressionGroups } from '@/types/expressions'
 import ContextMenu, { type ContextMenuPos, type ContextMenuEntry } from '@/components/shared/ContextMenu'
 import { useLongPress } from '@/hooks/useLongPress'
 import { toast } from '@/lib/toast'
@@ -20,6 +20,8 @@ type ExpressionMenuView =
   | { kind: 'single-picker' }
   | { kind: 'group-character-picker' }
   | { kind: 'group-expression-picker'; characterId: string }
+  | { kind: 'multi-character-picker' }
+  | { kind: 'multi-character-expression-picker'; groupName: string }
 
 export default function ExpressionDisplay() {
   const { t } = useTranslation('chat')
@@ -34,6 +36,7 @@ export default function ExpressionDisplay() {
   const toggleMinimized = useStore((s) => s.toggleExpressionMinimized)
   const setActiveExpression = useStore((s) => s.setActiveExpression)
   const setGroupExpression = useStore((s) => s.setGroupExpression)
+  const setMultiCharacterExpressions = useStore((s) => s.setMultiCharacterExpressions)
   const setActiveChatMetadata = useStore((s) => s.setActiveChatMetadata)
 
   // Group chat state
@@ -42,6 +45,7 @@ export default function ExpressionDisplay() {
   const mutedCharacterIds = useStore((s) => s.mutedCharacterIds)
   const activeGroupCharacterId = useStore((s) => s.activeGroupCharacterId)
   const groupExpressions = useStore((s) => s.groupExpressions)
+  const multiCharacterExpressions = useStore((s) => s.multiCharacterExpressions)
   const respondingCharacterId = useStore((s) => s.respondingCharacterId)
   const isStreaming = useStore((s) => s.isStreaming)
 
@@ -52,6 +56,7 @@ export default function ExpressionDisplay() {
 
   // Fetch expression config directly from API (store character data may be stale)
   const [exprConfig, setExprConfig] = useState<ExpressionConfig | null>(null)
+  const [multiCharacterGroups, setMultiCharacterGroups] = useState<ExpressionGroups>({})
   const [configVersion, setConfigVersion] = useState(0)
   const resolvedCharId = expressionCharacterId || activeCharacterId
 
@@ -69,11 +74,16 @@ export default function ExpressionDisplay() {
   useEffect(() => {
     if (!resolvedCharId) {
       setExprConfig(null)
+      setMultiCharacterGroups({})
       return
     }
-    expressionsApi.get(resolvedCharId)
-      .then(setExprConfig)
-      .catch(() => setExprConfig(null))
+    Promise.all([
+      expressionsApi.get(resolvedCharId).catch(() => null),
+      expressionsApi.getGroups(resolvedCharId).catch(() => ({} as ExpressionGroups)),
+    ]).then(([config, groups]) => {
+      setExprConfig(config)
+      setMultiCharacterGroups(groups)
+    })
   }, [resolvedCharId, configVersion])
 
   // Track the last resolved character+config pair to avoid loops
@@ -178,6 +188,23 @@ export default function ExpressionDisplay() {
 
   const isGroupExpressionMode = isGroupChat && groupExpressionCharIds.length > 0
 
+  // A multi-character card is one character record with named expression
+  // groups. Only groups selected for the latest response are displayed; this
+  // is separate from a group chat, whose keys are character IDs.
+  const activeMultiCharacterGroups = useMemo(() => {
+    if (isGroupChat) return []
+    return Object.keys(multiCharacterExpressions).filter((groupName) => {
+      const selected = multiCharacterExpressions[groupName]
+      return !!selected?.imageId && !!multiCharacterGroups[groupName]?.[selected.label]
+    })
+  }, [isGroupChat, multiCharacterExpressions, multiCharacterGroups])
+
+  const isMultiCharacterCardMode = activeMultiCharacterGroups.length > 0
+  const isStackedExpressionMode = isGroupExpressionMode || isMultiCharacterCardMode
+  const stackedExpressionKeys = isGroupExpressionMode
+    ? groupExpressionCharIds
+    : activeMultiCharacterGroups
+
   const getGroupCharImageUrl = useCallback((charId: string): string | null => {
     const expr = groupExpressions[charId]
     if (expr?.imageId) return expressionsApi.imageUrl(expr.imageId)
@@ -198,6 +225,24 @@ export default function ExpressionDisplay() {
       || groupConfigs.get(charId)?.defaultExpression
       || null
   }, [groupExpressions, groupConfigs])
+
+  const getStackedImageUrl = useCallback((key: string): string | null => {
+    if (isGroupExpressionMode) return getGroupCharImageUrl(key)
+    const expression = multiCharacterExpressions[key]
+    return expression?.imageId ? expressionsApi.imageUrl(expression.imageId) : null
+  }, [getGroupCharImageUrl, isGroupExpressionMode, multiCharacterExpressions])
+
+  const getStackedLabel = useCallback((key: string): string | null => {
+    if (isGroupExpressionMode) return getGroupCharLabel(key)
+    return multiCharacterExpressions[key]?.label ?? null
+  }, [getGroupCharLabel, isGroupExpressionMode, multiCharacterExpressions])
+
+  const getStackedName = useCallback((key: string): string => {
+    if (isGroupExpressionMode) {
+      return characters.find((candidate) => candidate.id === key)?.name || '?'
+    }
+    return key === '_default' ? (character?.name || '?') : key
+  }, [character?.name, characters, isGroupExpressionMode])
 
   // ── Sizing ──
   const [pos, setPos] = useState({ x: display.x, y: display.y })
@@ -222,15 +267,15 @@ export default function ExpressionDisplay() {
     return EXPRESSION_SIZE_PRESETS[display.sizePreset as Exclude<ExpressionDisplaySize, 'custom'>] || EXPRESSION_SIZE_PRESETS.medium
   }, [display.sizePreset, customSize])
 
-  // Effective container size (wider for group expression mode)
+  // Effective container size (wider when several sprites are visible)
   const containerSize = useMemo(() => {
-    if (!isGroupExpressionMode || groupExpressionCharIds.length <= 1) return size
-    const n = groupExpressionCharIds.length
+    if (!isStackedExpressionMode || stackedExpressionKeys.length <= 1) return size
+    const n = stackedExpressionKeys.length
     // Overlap increases with more characters to keep total width reasonable
     const slotAdvance = size.width * Math.max(0.45, 0.75 - 0.1 * Math.max(0, n - 2))
     const totalWidth = Math.round(size.width + (n - 1) * slotAdvance)
     return { width: totalWidth, height: size.height }
-  }, [isGroupExpressionMode, groupExpressionCharIds.length, size])
+  }, [isStackedExpressionMode, stackedExpressionKeys.length, size])
 
   // Clamp position to screen bounds whenever display settings or size change
   useEffect(() => {
@@ -287,12 +332,12 @@ export default function ExpressionDisplay() {
   }, [currentImageUrl, preloadImage])
 
   useEffect(() => {
-    if (!isGroupExpressionMode) return
-    for (const charId of groupExpressionCharIds) {
-      const url = getGroupCharImageUrl(charId)
+    if (!isStackedExpressionMode) return
+    for (const key of stackedExpressionKeys) {
+      const url = getStackedImageUrl(key)
       if (url) preloadImage(url)
     }
-  }, [isGroupExpressionMode, groupExpressionCharIds, groupExpressions, groupConfigs, preloadImage, getGroupCharImageUrl])
+  }, [isStackedExpressionMode, stackedExpressionKeys, multiCharacterExpressions, groupExpressions, groupConfigs, preloadImage, getStackedImageUrl])
 
   const clampPos = useCallback(
     (x: number, y: number) => {
@@ -414,16 +459,22 @@ export default function ExpressionDisplay() {
 
   // ── Group expression layout calculations (must be before early returns) ──
   const groupSlotOverlap = useMemo(() => {
-    if (!isGroupExpressionMode || groupExpressionCharIds.length <= 1) return 0
-    const n = groupExpressionCharIds.length
+    if (!isStackedExpressionMode || stackedExpressionKeys.length <= 1) return 0
+    const n = stackedExpressionKeys.length
     return size.width * (1 - Math.max(0.45, 0.75 - 0.1 * Math.max(0, n - 2)))
-  }, [isGroupExpressionMode, groupExpressionCharIds.length, size.width])
+  }, [isStackedExpressionMode, stackedExpressionKeys.length, size.width])
 
   const directGroupMenuCharId = useMemo(() => {
     if (menuTargetCharId && groupConfigs.has(menuTargetCharId)) return menuTargetCharId
     if (groupExpressionCharIds.length === 1) return groupExpressionCharIds[0]
     return null
   }, [groupConfigs, groupExpressionCharIds, menuTargetCharId])
+
+  const directMultiCharacterGroup = useMemo(() => {
+    if (menuTargetCharId && multiCharacterGroups[menuTargetCharId]) return menuTargetCharId
+    if (activeMultiCharacterGroups.length === 1) return activeMultiCharacterGroups[0]
+    return null
+  }, [activeMultiCharacterGroups, menuTargetCharId, multiCharacterGroups])
 
   const selectSingleExpression = useCallback(async (label: string, imageId: string) => {
     if (!resolvedCharId) return
@@ -453,6 +504,24 @@ export default function ExpressionDisplay() {
       toast.error(t('expressionDisplay.failedSaveSelection'))
     }
   }, [activeChatId, closeContextMenu, setActiveChatMetadata, setGroupExpression, t])
+
+  const selectMultiCharacterExpression = useCallback(async (groupName: string, label: string, imageId: string) => {
+    const nextExpressions = {
+      ...useStore.getState().multiCharacterExpressions,
+      [groupName]: { label, imageId },
+    }
+    setMultiCharacterExpressions(nextExpressions)
+    closeContextMenu()
+    if (!activeChatId) return
+    try {
+      const updated = await chatsApi.patchMetadata(activeChatId, {
+        multi_character_expressions: nextExpressions,
+      })
+      setActiveChatMetadata(updated.metadata ?? null)
+    } catch {
+      toast.error(t('expressionDisplay.failedSaveSelection'))
+    }
+  }, [activeChatId, closeContextMenu, setActiveChatMetadata, setMultiCharacterExpressions, t])
 
   const contextMenuItems: ContextMenuEntry[] = useMemo(() => {
     const backToDisplayItem: ContextMenuEntry = {
@@ -511,9 +580,63 @@ export default function ExpressionDisplay() {
       ]
     }
 
+    if (menuView.kind === 'multi-character-picker') {
+      return [
+        backToDisplayItem,
+        { key: 'multi-character-divider', type: 'divider' as const },
+        ...activeMultiCharacterGroups.map((groupName) => ({
+          key: `multi-character-${groupName}`,
+          label: getStackedName(groupName),
+          onClick: () => setMenuView({ kind: 'multi-character-expression-picker', groupName }),
+        })),
+      ]
+    }
+
+    if (menuView.kind === 'multi-character-expression-picker') {
+      const mappings = multiCharacterGroups[menuView.groupName]
+      const backItem: ContextMenuEntry = directMultiCharacterGroup
+        ? backToDisplayItem
+        : {
+            key: 'back-multi-character-picker',
+            label: t('expressionDisplay.backToCharacterMenu'),
+            onClick: () => setMenuView({ kind: 'multi-character-picker' }),
+          }
+      if (!mappings) return [backItem]
+      return [
+        backItem,
+        { key: 'multi-character-expression-divider', type: 'divider' as const },
+        ...Object.entries(mappings).map(([label, imageId]) => ({
+          key: `multi-character-expression-${menuView.groupName}-${label}`,
+          label,
+          active: multiCharacterExpressions[menuView.groupName]?.label === label,
+          onClick: () => { void selectMultiCharacterExpression(menuView.groupName, label, imageId) },
+        })),
+      ]
+    }
+
     const items: ContextMenuEntry[] = []
 
-    if (isGroupExpressionMode) {
+    if (isMultiCharacterCardMode) {
+      if (directMultiCharacterGroup) {
+        items.push({
+          key: 'manual-multi-character-expression',
+          label: t('expressionDisplay.switchExpressionFor', {
+            name: getStackedName(directMultiCharacterGroup),
+          }),
+          onClick: () => setMenuView({
+            kind: 'multi-character-expression-picker',
+            groupName: directMultiCharacterGroup,
+          }),
+        })
+      } else {
+        items.push({
+          key: 'manual-multi-character',
+          label: t('expressionDisplay.chooseCharacter'),
+          onClick: () => setMenuView({ kind: 'multi-character-picker' }),
+        })
+      }
+      items.push({ key: 'manual-divider', type: 'divider' as const })
+    } else if (isGroupExpressionMode) {
       if (directGroupMenuCharId) {
         items.push({
           key: 'manual-group-expression',
@@ -608,11 +731,17 @@ export default function ExpressionDisplay() {
     expressionCharacterId,
     currentExpression,
     groupExpressionCharIds,
+    activeMultiCharacterGroups,
     characters,
     groupConfigs,
+    multiCharacterGroups,
+    multiCharacterExpressions,
     getGroupCharLabel,
+    getStackedName,
     directGroupMenuCharId,
+    directMultiCharacterGroup,
     isGroupExpressionMode,
+    isMultiCharacterCardMode,
     hasExpressions,
     display.sizePreset,
     display.opacity,
@@ -625,12 +754,13 @@ export default function ExpressionDisplay() {
     closeContextMenu,
     selectSingleExpression,
     selectGroupExpression,
+    selectMultiCharacterExpression,
     t,
   ])
 
   // ── Visibility gate ──
   if (!display.enabled) return null
-  if (!isGroupExpressionMode && (!hasExpressions || !currentImageUrl)) return null
+  if (!isStackedExpressionMode && (!hasExpressions || !currentImageUrl)) return null
 
   // ── Minimized state ──
   if (display.minimized) {
@@ -654,8 +784,8 @@ export default function ExpressionDisplay() {
       isDragging.current = false
     }
 
-    const minimizedTitle = isGroupExpressionMode
-      ? groupExpressionCharIds.map((id) => characters.find((c) => c.id === id)?.name || '?').join(', ')
+    const minimizedTitle = isStackedExpressionMode
+      ? stackedExpressionKeys.map(getStackedName).join(', ')
       : `${character?.name || ''} — ${currentExpression || ''}`
 
     return createPortal(
@@ -673,8 +803,8 @@ export default function ExpressionDisplay() {
           title={minimizedTitle}
         >
           <span className={styles.minimizedIcon}>
-            {isGroupExpressionMode
-              ? groupExpressionCharIds.length.toString()
+            {isStackedExpressionMode
+              ? stackedExpressionKeys.length.toString()
               : (character?.name || '?')[0].toUpperCase()
             }
           </span>
@@ -686,8 +816,8 @@ export default function ExpressionDisplay() {
   }
 
   // ── Drag handle name ──
-  const handleDisplayName = isGroupExpressionMode
-    ? groupExpressionCharIds.map((id) => characters.find((c) => c.id === id)?.name || '?').join(' / ')
+  const handleDisplayName = isStackedExpressionMode
+    ? stackedExpressionKeys.map(getStackedName).join(' / ')
     : character?.name
 
   const containerClass = [
@@ -756,26 +886,26 @@ export default function ExpressionDisplay() {
         )}
 
         {/* Expression image area */}
-        {isGroupExpressionMode ? (
-          /* ── Group expression row ── */
+        {isStackedExpressionMode ? (
+          /* ── Multi-sprite expression row ── */
           <div
             className={styles.groupRow}
             onPointerDown={!display.clickThrough ? handlePointerDown : undefined}
             onPointerMove={!display.clickThrough ? handlePointerMove : undefined}
             onPointerUp={!display.clickThrough ? handlePointerUp : undefined}
           >
-            {groupExpressionCharIds.map((charId, idx) => {
-              const imageUrl = getGroupCharImageUrl(charId)
-              const label = getGroupCharLabel(charId)
-              const isResponding = isStreaming && respondingCharacterId === charId
-              const isHovered = hoveredCharId === charId
+            {stackedExpressionKeys.map((key, idx) => {
+              const imageUrl = getStackedImageUrl(key)
+              const label = getStackedLabel(key)
+              const isResponding = isGroupExpressionMode && isStreaming && respondingCharacterId === key
+              const isHovered = hoveredCharId === key
               const isActive = isResponding || isHovered
-              const char = characters.find((c) => c.id === charId)
+              const displayName = getStackedName(key)
               const marginLeft = idx === 0 ? 0 : -groupSlotOverlap
 
               return (
                 <div
-                  key={charId}
+                  key={key}
                   className={[
                     styles.groupSlot,
                     isActive ? styles.groupSlotActive : styles.groupSlotIdle,
@@ -785,16 +915,16 @@ export default function ExpressionDisplay() {
                     marginLeft,
                     zIndex: isHovered ? 3 : isResponding ? 2 : 1,
                   }}
-                  onMouseEnter={() => setHoveredCharId(charId)}
+                  onMouseEnter={() => setHoveredCharId(key)}
                   onMouseLeave={() => setHoveredCharId(null)}
-                  onContextMenu={!display.clickThrough ? (e) => handleGroupSlotContextMenu(e, charId) : undefined}
+                  onContextMenu={!display.clickThrough ? (e) => handleGroupSlotContextMenu(e, key) : undefined}
                 >
                   <AnimatePresence mode="sync">
                     {imageUrl && readyUrls.has(imageUrl) && (
                       <motion.img
                         key={imageUrl}
                         src={imageUrl}
-                        alt={label || char?.name || ''}
+                        alt={label || displayName}
                         className={styles.expressionImg}
                         initial={{ opacity: 0 }}
                         animate={{ opacity: 1 }}
@@ -805,7 +935,7 @@ export default function ExpressionDisplay() {
                     )}
                   </AnimatePresence>
                   <span className={styles.groupNameTag}>
-                    {char?.name}{label ? ` — ${label}` : ''}
+                    {displayName}{label ? ` — ${label}` : ''}
                   </span>
                 </div>
               )

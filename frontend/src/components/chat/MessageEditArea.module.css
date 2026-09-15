@@ -158,6 +158,7 @@
     position: sticky;
     bottom: 0;
     padding: 6px 0;
-    background: var(--lumiverse-surface, inherit);
+    /* Sticky positioning must not turn the action row into its own surface. */
+    background: transparent;
   }
 }

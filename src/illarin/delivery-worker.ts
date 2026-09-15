@@ -8,8 +8,9 @@ import {
   IllarinUnauthorizedError,
   IllarinUnavailableError,
 } from "./api";
-import type { IllarinDelivery } from "./types";
+import type { DeliveryWorkList, IllarinDelivery, WithheldNotice } from "./types";
 import { installIllarinDelivery } from "./delivery-installer";
+import { recordWithheld, reportLibrary } from "./extensions";
 import { getValidAccessToken, handleTerminalUnauthorized, refreshAccessToken } from "./tokens";
 
 const MAX_BACKOFF_MS = 60_000;
@@ -18,7 +19,8 @@ export interface DeliveryCycleDependencies {
   getInstance(userId: string): Promise<IllarinInstance | null>;
   getAccessToken(userId: string): Promise<string | null>;
   refreshAccessToken(userId: string): Promise<string | null>;
-  collect(baseUrl: string, token: string, acknowledge: readonly string[]): Promise<IllarinDelivery[]>;
+  collect(baseUrl: string, token: string, acknowledge: readonly string[]): Promise<DeliveryWorkList>;
+  recordWithheld(userId: string, notices: readonly WithheldNotice[]): Promise<void>;
   pendingAcknowledgements(userId: string, instanceId: string): string[];
   markAcknowledged(userId: string, instanceId: string, deliveryIds: readonly string[]): void;
   hasReceipt(userId: string, instanceId: string, deliveryId: string): boolean;
@@ -39,6 +41,7 @@ const productionDependencies: DeliveryCycleDependencies = {
   getAccessToken: getValidAccessToken,
   refreshAccessToken,
   collect: collectDeliveries,
+  recordWithheld,
   pendingAcknowledgements: svc.pendingDeliveryAcknowledgements,
   markAcknowledged: svc.markDeliveriesAcknowledged,
   hasReceipt: svc.hasDeliveryReceipt,
@@ -59,7 +62,7 @@ async function collectWithOneRefresh(
   instance: IllarinInstance,
   acknowledge: readonly string[],
   dependencies: DeliveryCycleDependencies,
-): Promise<IllarinDelivery[] | null> {
+): Promise<DeliveryWorkList | null> {
   const accessToken = await dependencies.getAccessToken(userId);
   if (!accessToken) return null;
   try {
@@ -95,16 +98,17 @@ export async function runDeliveryCycle(
     return { status: "stop", installed: 0, failed: 0 };
   }
   const acknowledge = dependencies.pendingAcknowledgements(userId, instance.instanceId);
-  const deliveries = await collectWithOneRefresh(userId, instance, acknowledge, dependencies);
-  if (!deliveries || signal?.aborted) return { status: "stop", installed: 0, failed: 0 };
+  const work = await collectWithOneRefresh(userId, instance, acknowledge, dependencies);
+  if (!work || signal?.aborted) return { status: "stop", installed: 0, failed: 0 };
 
   // A successful response means Illarin committed every acknowledgement in
   // the request, whether it returned work (200) or an empty wait (204).
   dependencies.markAcknowledged(userId, instance.instanceId, acknowledge);
+  await dependencies.recordWithheld(userId, work.withheld);
 
   let installed = 0;
   let failed = 0;
-  for (const delivery of deliveries) {
+  for (const delivery of work.deliveries) {
     if (signal?.aborted) return { status: "stop", installed, failed };
     if (dependencies.hasReceipt(userId, instance.instanceId, delivery.id)) {
       dependencies.queueAcknowledgement(userId, instance.instanceId, delivery.id);
@@ -174,6 +178,7 @@ export function startDeliveryWorker(userId: string): void {
   const controller = new AbortController();
   workers.set(userId, controller);
   void runWorker(userId, controller);
+  void reportLibrary(userId);
 }
 
 export function stopDeliveryWorker(userId: string): void {
